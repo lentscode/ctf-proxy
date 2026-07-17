@@ -27,6 +27,11 @@ func (p *Proxy) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	return p.serve(ctx, listener)
+}
+
+func (p *Proxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 
 	cleanUp := context.AfterFunc(ctx, func() {
@@ -68,29 +73,42 @@ func (p *Proxy) forward(client net.Conn) error {
 	errChan := make(chan error, 2)
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		errChan <- p.copy(upstream, client)
+		err := p.copy(upstream, client)
+		if err == nil {
+			closeWrite(upstream)
+		}
+		errChan <- err
 	})
 	wg.Go(func() {
-		errChan <- p.copy(client, upstream)
+		err := p.copy(client, upstream)
+		if err == nil {
+			closeWrite(client)
+		}
+		errChan <- err
 	})
 
-	firstCompleted := <-errChan
-
-	_ = client.Close()
-	_ = upstream.Close()
-
 	wg.Wait()
-	<-errChan
 
-	//TODO(lentscode): better error handling
-	if firstCompleted != nil {
-		return firstCompleted
+	firstErr := <-errChan
+	secondErr := <-errChan
+
+	if firstErr != nil {
+		return firstErr
 	}
 
-	return nil
+	return secondErr
 }
 
 func (p *Proxy) copy(dst, src net.Conn) error {
 	_, err := io.Copy(dst, src)
 	return err
+}
+
+func closeWrite(conn net.Conn) {
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.CloseWrite()
+		return
+	}
+
+	_ = conn.Close()
 }
