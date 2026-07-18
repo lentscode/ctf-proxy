@@ -1,2 +1,3 @@
-// Package filter will define request and response filtering contracts.
+// Package filter defines protocol-neutral filtering contracts and evaluates
+// configured filter chains.
 package filter
