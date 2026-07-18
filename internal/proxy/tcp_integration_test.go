@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestProxyForwardsTCP(t *testing.T) {
+func TestTCPProxyForwardsTCP(t *testing.T) {
 	a := assert.New(t)
 	upstreamAddr := startEchoServer(t)
 
-	p := NewProxy("unused", upstreamAddr, make(chan struct{}, 1))
-	proxyAddr, forwardDone := startProxyOnce(t, p)
+	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1))
+	proxyAddr, forwardDone := startTCPProxyOnce(t, p)
 
 	client, err := net.DialTCP("tcp", nil, proxyAddr)
 	a.NoError(err)
@@ -44,7 +44,7 @@ func TestProxyForwardsTCP(t *testing.T) {
 	}
 }
 
-func TestProxyServe(t *testing.T) {
+func TestTCPProxyServe(t *testing.T) {
 	a := assert.New(t)
 	upstreamAddr := startEchoServer(t)
 	listener, err := net.Listen("tcp", "localhost:0")
@@ -54,7 +54,7 @@ func TestProxyServe(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	p := NewProxy("unused", upstreamAddr, make(chan struct{}, 1))
+	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1))
 	serveDone := make(chan error, 1)
 	go func() {
 		serveDone <- p.serve(ctx, listener)
@@ -120,7 +120,7 @@ func startEchoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-func startProxyOnce(t *testing.T, p *Proxy) (*net.TCPAddr, <-chan error) {
+func startTCPProxyOnce(t *testing.T, p *TCPProxy) (*net.TCPAddr, <-chan error) {
 	t.Helper()
 	a := assert.New(t)
 

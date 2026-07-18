@@ -7,22 +7,23 @@ import (
 	"sync"
 )
 
-type Proxy struct {
+// TCPProxy forwards raw TCP connections to an upstream address.
+type TCPProxy struct {
 	listenAddr   string
 	upstreamAddr string
 
 	slots chan struct{}
 }
 
-func NewProxy(listenAddr, upstreamAddr string, slots chan struct{}) *Proxy {
-	return &Proxy{
+func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}) *TCPProxy {
+	return &TCPProxy{
 		listenAddr:   listenAddr,
 		upstreamAddr: upstreamAddr,
 		slots:        slots,
 	}
 }
 
-func (p *Proxy) Start(ctx context.Context) error {
+func (p *TCPProxy) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", p.listenAddr)
 	if err != nil {
 		return err
@@ -31,7 +32,7 @@ func (p *Proxy) Start(ctx context.Context) error {
 	return p.serve(ctx, listener)
 }
 
-func (p *Proxy) serve(ctx context.Context, listener net.Listener) error {
+func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 
 	cleanUp := context.AfterFunc(ctx, func() {
@@ -60,7 +61,7 @@ func (p *Proxy) serve(ctx context.Context, listener net.Listener) error {
 	}
 }
 
-func (p *Proxy) forward(client net.Conn) error {
+func (p *TCPProxy) forward(client net.Conn) error {
 	defer client.Close()
 
 	//TODO(lentscode): add timeout
@@ -99,7 +100,7 @@ func (p *Proxy) forward(client net.Conn) error {
 	return secondErr
 }
 
-func (p *Proxy) copy(dst, src net.Conn) error {
+func (p *TCPProxy) copy(dst, src net.Conn) error {
 	_, err := io.Copy(dst, src)
 	return err
 }
