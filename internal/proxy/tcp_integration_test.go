@@ -8,92 +8,118 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTCPProxyForwardsTCP(t *testing.T) {
-	a := assert.New(t)
 	upstreamAddr := startEchoServer(t)
 
 	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1))
 	proxyAddr, forwardDone := startTCPProxyOnce(t, p)
 
 	client, err := net.DialTCP("tcp", nil, proxyAddr)
-	a.NoError(err)
+	require.NoError(t, err)
 	defer client.Close()
 
 	err = client.SetDeadline(time.Now().Add(time.Second))
-	a.NoError(err)
+	require.NoError(t, err)
 
 	payload := []byte("proxy test")
 	_, err = client.Write(payload)
-	a.NoError(err)
+	require.NoError(t, err)
 
 	err = client.CloseWrite()
-	a.NoError(err)
+	require.NoError(t, err)
 
 	got, err := io.ReadAll(client)
-	a.NoError(err)
+	require.NoError(t, err)
 
-	a.Equal(string(payload), string(got))
+	assert.Equal(t, string(payload), string(got))
 
 	select {
 	case err := <-forwardDone:
-		a.NoError(err)
+		require.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("proxy timeout")
 	}
 }
 
 func TestTCPProxyServe(t *testing.T) {
-	a := assert.New(t)
 	upstreamAddr := startEchoServer(t)
-	listener, err := net.Listen("tcp", "localhost:0")
-	a.NoError(err)
-	proxyAddr, ok := listener.Addr().(*net.TCPAddr)
-	a.True(ok)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1))
-	serveDone := make(chan error, 1)
-	go func() {
-		serveDone <- p.serve(ctx, listener)
-	}()
+	proxyAddr, cancel, serveDone := startTCPProxy(t, upstreamAddr, make(chan struct{}, 1))
 
 	client, err := net.DialTCP("tcp", nil, proxyAddr)
-	a.NoError(err)
+	require.NoError(t, err)
 	defer client.Close()
 
 	err = client.SetDeadline(time.Now().Add(time.Second))
-	a.NoError(err)
+	require.NoError(t, err)
 
 	payload := []byte("proxy test")
 	_, err = client.Write(payload)
-	a.NoError(err)
+	require.NoError(t, err)
 
 	err = client.CloseWrite()
-	a.NoError(err)
+	require.NoError(t, err)
 
 	got, err := io.ReadAll(client)
-	a.NoError(err)
+	require.NoError(t, err)
 
-	a.Equal(string(payload), string(got))
+	assert.Equal(t, string(payload), string(got))
 	cancel()
 
+	requireProxyStopped(t, serveDone)
+}
+
+func TestTCPProxyServeClosesConnectionsWhenSlotsAreFull(t *testing.T) {
+	upstreamListener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	defer upstreamListener.Close()
+
+	upstreamAccepted := make(chan struct{})
+	releaseUpstream := make(chan struct{})
+	t.Cleanup(func() { close(releaseUpstream) })
+	go func() {
+		conn, err := upstreamListener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		upstreamAccepted <- struct{}{}
+		<-releaseUpstream
+	}()
+
+	proxyAddr, cancel, serveDone := startTCPProxy(t, upstreamListener.Addr().String(), make(chan struct{}, 1))
+	defer cancel()
+
+	firstClient, err := net.DialTCP("tcp", nil, proxyAddr)
+	require.NoError(t, err)
+	defer firstClient.Close()
+
 	select {
-	case err := <-serveDone:
-		a.NoError(err)
+	case <-upstreamAccepted:
 	case <-time.After(time.Second):
-		t.Fatal("proxy timeout")
+		t.Fatal("upstream did not receive the first proxied connection")
 	}
+
+	secondClient, err := net.DialTCP("tcp", nil, proxyAddr)
+	require.NoError(t, err)
+	defer secondClient.Close()
+	require.NoError(t, secondClient.SetReadDeadline(time.Now().Add(time.Second)))
+
+	_, err = secondClient.Read(make([]byte, 1))
+	assert.Error(t, err)
+
+	cancel()
+	requireProxyStopped(t, serveDone)
 }
 
 func startEchoServer(t *testing.T) string {
 	t.Helper()
-	a := assert.New(t)
 
 	listener, err := net.Listen("tcp", "localhost:0")
-	a.NoError(err)
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		_ = listener.Close()
@@ -122,10 +148,9 @@ func startEchoServer(t *testing.T) string {
 
 func startTCPProxyOnce(t *testing.T, p *TCPProxy) (*net.TCPAddr, <-chan error) {
 	t.Helper()
-	a := assert.New(t)
 
 	listener, err := net.Listen("tcp", "localhost:0")
-	a.NoError(err)
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		_ = listener.Close()
@@ -144,7 +169,26 @@ func startTCPProxyOnce(t *testing.T, p *TCPProxy) (*net.TCPAddr, <-chan error) {
 	}()
 
 	addr, ok := listener.Addr().(*net.TCPAddr)
-	a.True(ok)
+	require.True(t, ok)
 
 	return addr, forwardDone
+}
+
+func startTCPProxy(t *testing.T, upstreamAddr string, slots chan struct{}) (*net.TCPAddr, context.CancelFunc, <-chan error) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	proxy := NewTCPProxy("unused", upstreamAddr, slots)
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- proxy.serve(ctx, listener)
+	}()
+
+	return addr, cancel, serveDone
 }
