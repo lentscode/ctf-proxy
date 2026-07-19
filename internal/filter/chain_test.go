@@ -38,13 +38,36 @@ func TestChainEvaluatesEligibleFiltersInOrder(t *testing.T) {
 }
 
 func TestChainFilterFailuresFailOpen(t *testing.T) {
-	chain, err := NewChain(
+	events := &recordingEventSink{}
+	chain, err := NewChainWithEventSink(events,
 		testFilter{name: "error", evaluate: func(Message) (Decision, error) { return Decision{}, errors.New("failed") }},
 		testFilter{name: "panic", evaluate: func(Message) (Decision, error) { panic("failed") }},
+		testFilter{name: "invalid", evaluate: func(Message) (Decision, error) { return Decision{Action: ActionUnknown}, nil }},
 	)
 	require.NoError(t, err)
 
-	assert.Equal(t, Decision{Action: ActionAllow}, chain.Evaluate(context.Background(), Message{}))
+	message := Message{Protocol: ProtocolHTTP, Direction: DirectionResponse}
+	assert.Equal(t, Decision{Action: ActionAllow}, chain.Evaluate(context.Background(), message))
+	assert.Equal(t, []Event{
+		{Kind: EventKindEvaluationError, Filter: "error", Protocol: ProtocolHTTP, Direction: DirectionResponse},
+		{Kind: EventKindPanic, Filter: "panic", Protocol: ProtocolHTTP, Direction: DirectionResponse},
+		{Kind: EventKindInvalidDecision, Filter: "invalid", Protocol: ProtocolHTTP, Direction: DirectionResponse},
+	}, events.events)
+}
+
+func TestChainReportsRejection(t *testing.T) {
+	events := &recordingEventSink{}
+	chain, err := NewChainWithEventSink(events, testFilter{name: "reject", evaluate: func(Message) (Decision, error) {
+		return Decision{Action: ActionReject}, nil
+	}})
+	require.NoError(t, err)
+
+	decision := chain.Evaluate(context.Background(), Message{Protocol: ProtocolTCP, Direction: DirectionRequest})
+
+	assert.Equal(t, ActionReject, decision.Action)
+	assert.Equal(t, []Event{{
+		Kind: EventKindRejected, Filter: "reject", Protocol: ProtocolTCP, Direction: DirectionRequest, Action: ActionReject,
+	}}, events.events)
 }
 
 func TestChainNeedsHTTPBodyOnlyForEligibleDirection(t *testing.T) {
@@ -71,6 +94,14 @@ type testFilter struct {
 	name         string
 	requirements Requirements
 	evaluate     func(Message) (Decision, error)
+}
+
+type recordingEventSink struct {
+	events []Event
+}
+
+func (s *recordingEventSink) TryReport(event Event) {
+	s.events = append(s.events, event)
 }
 
 func (f testFilter) Name() string               { return f.name }

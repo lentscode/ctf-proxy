@@ -8,11 +8,22 @@ import (
 // Chain evaluates an ordered, immutable set of filters.
 type Chain struct {
 	filters []Filter
+	events  EventSink
 }
 
 // NewChain validates filters and returns an immutable evaluation chain.
 func NewChain(filters ...Filter) (*Chain, error) {
-	chain := &Chain{filters: make([]Filter, len(filters))}
+	return NewChainWithEventSink(nil, filters...)
+}
+
+// NewChainWithEventSink validates filters and returns an immutable evaluation
+// chain that reports sanitized events to sink.
+func NewChainWithEventSink(sink EventSink, filters ...Filter) (*Chain, error) {
+	if sink == nil {
+		sink = discardEventSink{}
+	}
+
+	chain := &Chain{filters: make([]Filter, len(filters)), events: sink}
 	seenNames := make(map[string]struct{}, len(filters))
 
 	for index, current := range filters {
@@ -52,13 +63,29 @@ func (c *Chain) Evaluate(ctx context.Context, message Message) Decision {
 			continue
 		}
 
-		decision, ok := evaluateSafely(ctx, current, message)
-		if !ok || decision.Action != ActionReject {
+		decision, failure := evaluateSafely(ctx, current, message)
+		if failure != EventKindUnknown {
+			c.report(Event{
+				Kind:      failure,
+				Filter:    current.Name(),
+				Protocol:  message.Protocol,
+				Direction: message.Direction,
+			})
+			continue
+		}
+		if decision.Action != ActionReject {
 			continue
 		}
 		if decision.Filter == "" {
 			decision.Filter = current.Name()
 		}
+		c.report(Event{
+			Kind:      EventKindRejected,
+			Filter:    decision.Filter,
+			Protocol:  message.Protocol,
+			Direction: message.Direction,
+			Action:    decision.Action,
+		})
 		return decision
 	}
 
@@ -82,20 +109,27 @@ func (c *Chain) NeedsHTTPBody(direction Direction) bool {
 	return false
 }
 
-func evaluateSafely(ctx context.Context, current Filter, message Message) (decision Decision, ok bool) {
-	ok = false
+func (c *Chain) report(event Event) {
+	defer func() { _ = recover() }()
+	c.events.TryReport(event)
+}
+
+func evaluateSafely(ctx context.Context, current Filter, message Message) (decision Decision, failure EventKind) {
 	defer func() {
 		if recover() != nil {
-			ok = false
+			failure = EventKindPanic
 		}
 	}()
 
 	decision, err := current.Evaluate(ctx, message)
-	if err != nil || (decision.Action != ActionAllow && decision.Action != ActionReject) {
-		return Decision{}, false
+	if err != nil {
+		return Decision{}, EventKindEvaluationError
+	}
+	if decision.Action != ActionAllow && decision.Action != ActionReject {
+		return Decision{}, EventKindInvalidDecision
 	}
 
-	return decision, true
+	return decision, EventKindUnknown
 }
 
 func matches(requirements Requirements, message Message) bool {
