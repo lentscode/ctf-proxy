@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lentscode/ctf-proxy/internal/filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ import (
 func TestTCPProxyForwardsTCP(t *testing.T) {
 	upstreamAddr := startEchoServer(t)
 
-	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1))
+	p := NewTCPProxy("unused", upstreamAddr, make(chan struct{}, 1), nil)
 	proxyAddr, forwardDone := startTCPProxyOnce(t, p)
 
 	client, err := net.DialTCP("tcp", nil, proxyAddr)
@@ -115,6 +116,109 @@ func TestTCPProxyServeClosesConnectionsWhenSlotsAreFull(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+func TestTCPProxyRejectsRequestChunks(t *testing.T) {
+	upstream, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	defer upstream.Close()
+
+	upstreamRead := make(chan []byte, 1)
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buffer := make([]byte, 32)
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+		n, _ := conn.Read(buffer)
+		upstreamRead <- buffer[:n]
+	}()
+
+	recorder := &messageRecorder{}
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-request",
+		requirements: filter.Requirements{
+			Protocols:  []filter.Protocol{filter.ProtocolTCP},
+			Directions: []filter.Direction{filter.DirectionRequest},
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			recorder.add(message)
+			return filter.Decision{Action: filter.ActionReject}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	p := NewTCPProxy("unused", upstream.Addr().String(), make(chan struct{}, 1), chain)
+	proxyAddr, forwardDone := startTCPProxyOnce(t, p)
+	client, err := net.DialTCP("tcp", nil, proxyAddr)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+
+	_, err = client.Write([]byte("blocked"))
+	require.NoError(t, err)
+	_, err = client.Read(make([]byte, 1))
+	assert.Error(t, err)
+
+	assert.Empty(t, <-upstreamRead)
+	messages := recorder.all()
+	require.Len(t, messages, 1)
+	assert.Equal(t, filter.DirectionRequest, messages[0].Direction)
+	assert.NotEmpty(t, messages[0].Connection.LocalAddr)
+	assert.NotEmpty(t, messages[0].Connection.RemoteAddr)
+
+	select {
+	case err := <-forwardDone:
+		require.ErrorIs(t, err, errTCPFilterRejected)
+	case <-time.After(time.Second):
+		t.Fatal("proxy timeout")
+	}
+}
+
+func TestTCPProxyRejectsResponseChunks(t *testing.T) {
+	upstream, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	defer upstream.Close()
+	go func() {
+		conn, err := upstream.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("blocked response"))
+		<-time.After(time.Second)
+	}()
+
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-response",
+		requirements: filter.Requirements{
+			Protocols:  []filter.Protocol{filter.ProtocolTCP},
+			Directions: []filter.Direction{filter.DirectionResponse},
+		},
+		evaluate: func(filter.Message) (filter.Decision, error) {
+			return filter.Decision{Action: filter.ActionReject}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	p := NewTCPProxy("unused", upstream.Addr().String(), make(chan struct{}, 1), chain)
+	proxyAddr, forwardDone := startTCPProxyOnce(t, p)
+	client, err := net.DialTCP("tcp", nil, proxyAddr)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
+
+	_, err = client.Read(make([]byte, 32))
+	assert.Error(t, err)
+
+	select {
+	case err := <-forwardDone:
+		require.ErrorIs(t, err, errTCPFilterRejected)
+	case <-time.After(time.Second):
+		t.Fatal("proxy timeout")
+	}
+}
+
 func startEchoServer(t *testing.T) string {
 	t.Helper()
 
@@ -184,7 +288,7 @@ func startTCPProxy(t *testing.T, upstreamAddr string, slots chan struct{}) (*net
 	require.True(t, ok)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	proxy := NewTCPProxy("unused", upstreamAddr, slots)
+	proxy := NewTCPProxy("unused", upstreamAddr, slots, nil)
 	serveDone := make(chan error, 1)
 	go func() {
 		serveDone <- proxy.serve(ctx, listener)
