@@ -11,12 +11,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 
 	"go.yaml.in/yaml/v4"
 )
+
+var proxyNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
 
 // Version is the supported version of the main configuration format.
 const Version = 1
@@ -89,6 +92,23 @@ func OpenStore(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{path: path, cfg: clone(cfg)}, nil
+}
+
+// OpenOrCreateStore opens path, creating a valid empty configuration when the
+// file does not exist. Its parent directory must already exist.
+func OpenOrCreateStore(path string) (*Store, error) {
+	store, err := OpenStore(path)
+	if err == nil {
+		return store, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	initial := Config{Version: Version, Proxies: []Proxy{}}
+	if err := Save(path, initial); err != nil {
+		return nil, err
+	}
+	return &Store{path: path, cfg: initial}, nil
 }
 
 // Snapshot returns an independent copy of the current configuration.
@@ -201,9 +221,6 @@ func (c Config) Validate() error {
 	if c.MaxConnections < 0 || c.MaxConnections > MaxConnectionsLimit {
 		return fmt.Errorf("max_connections must be between 0 and %d", MaxConnectionsLimit)
 	}
-	if len(c.Proxies) == 0 {
-		return errors.New("at least one proxy is required")
-	}
 	for index, path := range c.FilterFiles {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("filter_files at index %d is empty", index)
@@ -240,8 +257,8 @@ func clone(cfg Config) Config {
 }
 
 func (p Proxy) validate() error {
-	if p.Name == "" {
-		return errors.New("name is required")
+	if !proxyNamePattern.MatchString(p.Name) {
+		return errors.New("name must match [A-Za-z0-9][A-Za-z0-9_-]{0,62}")
 	}
 	if p.Protocol != "tcp" && p.Protocol != "http" {
 		return fmt.Errorf("protocol must be tcp or http, got %q", p.Protocol)

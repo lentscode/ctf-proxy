@@ -107,6 +107,16 @@ func TestStoreUpdatesOnlyAfterPersistingValidConfiguration(t *testing.T) {
 	require.Equal(t, "http", store.Snapshot().Proxies[0].Protocol)
 }
 
+func TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := OpenOrCreateStore(path)
+	require.NoError(t, err)
+	require.Empty(t, store.Snapshot().Proxies)
+	loaded, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, Config{Version: Version, Proxies: []Proxy{}}, loaded)
+}
+
 func validConfig() Config {
 	return Config{
 		Version:        Version,
