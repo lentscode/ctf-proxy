@@ -42,6 +42,11 @@ func (p *TCPProxy) Start(ctx context.Context) error {
 	return p.serve(ctx, listener)
 }
 
+// Serve forwards connections accepted from listener until ctx is cancelled.
+func (p *TCPProxy) Serve(ctx context.Context, listener net.Listener) error {
+	return p.serve(ctx, listener)
+}
+
 func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 

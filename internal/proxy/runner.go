@@ -1,10 +1,15 @@
 package proxy
 
-import "context"
+import (
+	"context"
+	"net"
+)
 
-// Runner starts a proxy and stops it when its context is cancelled.
+// Runner serves an already-bound listener and stops it when its context is
+// cancelled. Binding is owned by the control plane so it can report port
+// conflicts before committing configuration changes.
 type Runner interface {
-	Start(context.Context) error
+	Serve(context.Context, net.Listener) error
 }
 
 var (

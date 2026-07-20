@@ -51,6 +51,11 @@ func (p *HTTPProxy) Start(ctx context.Context) error {
 	return p.serve(ctx, listener)
 }
 
+// Serve forwards HTTP requests accepted from listener until ctx is cancelled.
+func (p *HTTPProxy) Serve(ctx context.Context, listener net.Listener) error {
+	return p.serve(ctx, listener)
+}
+
 func (p *HTTPProxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 
