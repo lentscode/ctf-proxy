@@ -3,22 +3,19 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"sync"
 	"syscall"
 
 	"github.com/lentscode/ctf-proxy/internal/config"
-	"github.com/lentscode/ctf-proxy/internal/filter"
-	"github.com/lentscode/ctf-proxy/internal/proxy"
+	"github.com/lentscode/ctf-proxy/internal/control"
 )
 
 const (
-	defaultConfigPath     = "ctf-proxy.yaml"
-	defaultMaxConnections = 128
+	defaultConfigPath  = "ctf-proxy.yaml"
+	defaultControlAddr = "127.0.0.1:8081"
 )
 
 func main() {
@@ -35,109 +32,32 @@ func main() {
 }
 
 func run(ctx context.Context, configPath string) error {
-	cfg, err := config.Load(configPath)
+	store, err := config.OpenOrCreateStore(configPath)
 	if err != nil {
 		return err
 	}
-	runners, err := buildRunners(cfg, configPath)
+	manager, err := control.NewManager(store, configPath)
 	if err != nil {
 		return err
 	}
-	if len(runners) == 0 {
-		return fmt.Errorf("configuration contains no active proxies")
+	if err := manager.Start(ctx); err != nil {
+		return err
 	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	errs := make(chan error, len(runners))
-	var wg sync.WaitGroup
-	for _, current := range runners {
-		log.Printf("starting %s proxy %q on %s -> %s", current.protocol, current.name, current.listen, current.upstream)
-		wg.Go(func() { errs <- current.runner.Start(ctx) })
+	defer manager.Close()
+	controlAddr := os.Getenv("CTF_PROXY_CONTROL_ADDR")
+	if controlAddr == "" {
+		controlAddr = defaultControlAddr
 	}
-	go func() {
-		wg.Wait()
-		close(errs)
-	}()
-
-	for err := range errs {
-		if err != nil {
-			cancel()
-			for range errs {
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-type namedRunner struct {
-	name, protocol, listen, upstream string
-	runner                           proxy.Runner
-}
-
-func buildRunners(cfg config.Config, configPath string) ([]namedRunner, error) {
-	registry := filter.NewRegistry()
-	if err := filter.RegisterBuiltins(registry); err != nil {
-		return nil, err
-	}
-
-	baseDirectory := filepath.Dir(configPath)
-	filterPaths := make([]string, len(cfg.FilterFiles))
-	for index, path := range cfg.FilterFiles {
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(baseDirectory, path)
-		}
-		filterPaths[index] = path
-	}
-	yamlFilters, err := filter.LoadYAMLFiles(filterPaths)
+	listener, err := control.ListenLoopback(controlAddr)
 	if err != nil {
-		return nil, fmt.Errorf("load global YAML filters: %w", err)
+		return err
 	}
-	for _, current := range yamlFilters {
-		compiled := current
-		if err := registry.Register(compiled.Name(), func() (filter.Filter, error) {
-			return compiled, nil
-		}); err != nil {
-			return nil, fmt.Errorf("register YAML filter %q: %w", compiled.Name(), err)
-		}
+	server := &http.Server{Handler: control.NewHandler(manager)}
+	log.Printf("control API listening on http://%s", controlAddr)
+	go func() { <-ctx.Done(); _ = server.Close() }()
+	err = server.Serve(listener)
+	if err == http.ErrServerClosed {
+		return nil
 	}
-
-	maxConnections := cfg.MaxConnections
-	if maxConnections == 0 {
-		maxConnections = defaultMaxConnections
-	}
-
-	runners := make([]namedRunner, 0, len(cfg.Proxies))
-	for _, definition := range cfg.Proxies {
-		filters, err := registry.Build(definition.Filters)
-		if err != nil {
-			return nil, fmt.Errorf("resolve filters for proxy %q: %w", definition.Name, err)
-		}
-		chain, err := filter.NewChain(filters...)
-		if err != nil {
-			return nil, fmt.Errorf("build filter chain for proxy %q: %w", definition.Name, err)
-		}
-
-		if !definition.Active {
-			log.Printf("proxy %q is inactive; not starting", definition.Name)
-			continue
-		}
-
-		current := namedRunner{
-			name: definition.Name, protocol: definition.Protocol,
-			listen: definition.Listen, upstream: definition.Upstream,
-		}
-		slots := make(chan struct{}, maxConnections)
-		switch definition.Protocol {
-		case "tcp":
-			current.runner = proxy.NewTCPProxy(definition.Listen, definition.Upstream, slots, chain)
-		case "http":
-			current.runner = proxy.NewHTTPProxy(definition.Listen, definition.Upstream, slots, chain)
-		default:
-			return nil, fmt.Errorf("build proxy %q: unsupported protocol %q", definition.Name, definition.Protocol)
-		}
-		runners = append(runners, current)
-	}
-	return runners, nil
+	return err
 }
