@@ -11,7 +11,9 @@ and intended architecture.
 
 `ctf-proxy` reads `./ctf-proxy.yaml` by default. Set `CTF_PROXY_CONFIG` to
 choose a different file. Relative filter paths are resolved relative to the
-main configuration file.
+main configuration file. If the file is absent, the process creates a valid
+empty configuration (`version: 1`, `proxies: []`) and starts the local control
+API, so proxies can be added after startup.
 
 ```yaml
 version: 1
@@ -48,7 +50,41 @@ global namespace; each proxy selects an ordered subset using `filters`. Filter
 names must therefore be unique across all YAML files and compiled Go filters.
 
 Only proxies with `active: true` are started. `active` defaults to `true`; set
-`active: false` to stage a proxy without binding its listener.
+`active: false` to stage a proxy without binding its listener. An empty proxy
+list is valid.
+
+## Local control API
+
+The binary serves an unauthenticated management API at `127.0.0.1:8081` by
+default. Use `CTF_PROXY_CONTROL_ADDR` to select another **loopback-only**
+address. Non-loopback listeners are rejected until authentication is added.
+
+The API creates, replaces, activates, deactivates, and removes only the
+affected proxy listener; it does not restart unrelated proxies. It persists
+accepted changes atomically to the main configuration file.
+
+```sh
+# Inspect health and configured proxies.
+curl http://127.0.0.1:8081/healthz
+curl http://127.0.0.1:8081/api/v1/proxies
+
+# Add a TCP proxy.
+curl -X POST http://127.0.0.1:8081/api/v1/proxies \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"challenge","protocol":"tcp","listen":":31337","upstream":"127.0.0.1:31338","filters":[]}'
+
+# Stage, activate, or remove a proxy.
+curl -X POST http://127.0.0.1:8081/api/v1/proxies/challenge/deactivate
+curl -X POST http://127.0.0.1:8081/api/v1/proxies/challenge/activate
+curl -X DELETE http://127.0.0.1:8081/api/v1/proxies/challenge
+
+# List the configured built-in and YAML filter names available to proxies.
+curl http://127.0.0.1:8081/api/v1/filters
+```
+
+This MVP only attaches existing filter names to proxies. YAML filter files are
+loaded and validated at process startup; authoring or reloading filter files
+through the API is intentionally deferred.
 
 ## Development
 
@@ -56,5 +92,9 @@ Only proxies with `active: true` are started. `active` defaults to `true`; set
 go run ./cmd/ctf-proxy
 ```
 
-The initial executable only confirms that the project is wired correctly; proxy
-behaviour will be introduced incrementally.
+Run the test suite with:
+
+```sh
+go test ./...
+go test -race ./...
+```
