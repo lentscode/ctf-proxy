@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,9 +11,15 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/lentscode/ctf-proxy/internal/filter"
 )
 
 var _ http.Handler = &HTTPProxy{}
+
+// DefaultMaxFilterBodyBytes is the largest HTTP body made available to a
+// body-dependent filter.
+const DefaultMaxFilterBodyBytes int64 = 64 << 10
 
 // HTTPProxy will forward HTTP requests to an upstream address.
 type HTTPProxy struct {
@@ -23,13 +30,15 @@ type HTTPProxy struct {
 
 	transport *http.Transport
 	upstream  *url.URL
+	filters   *filter.Chain
 }
 
-func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}) *HTTPProxy {
+func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain) *HTTPProxy {
 	return &HTTPProxy{
 		listenAddr:  listenAddr,
 		upstreamUrl: upstreamUrl,
 		slots:       slots,
+		filters:     filters,
 	}
 }
 
@@ -110,6 +119,16 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer p.releaseSlot()
 
+	requestMessage, err := p.requestFilterMessage(r)
+	if err != nil {
+		http.Error(w, "request body unavailable", http.StatusBadRequest)
+		return
+	}
+	if p.filters.Evaluate(r.Context(), requestMessage).Action == filter.ActionReject {
+		writeFilterRejection(w)
+		return
+	}
+
 	outbound := r.Clone(r.Context())
 
 	outbound.RequestURI = ""
@@ -128,6 +147,16 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer res.Body.Close()
 
+	responseMessage, err := p.responseFilterMessage(res)
+	if err != nil {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+		return
+	}
+	if p.filters.Evaluate(r.Context(), responseMessage).Action == filter.ActionReject {
+		writeFilterRejection(w)
+		return
+	}
+
 	removeHopByHopHeaders(res.Header)
 
 	for k, values := range res.Header {
@@ -142,6 +171,86 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		//TODO(lentscode): error handling
 		return
 	}
+}
+
+func (p *HTTPProxy) requestFilterMessage(r *http.Request) (filter.Message, error) {
+	message := filter.Message{
+		Protocol:  filter.ProtocolHTTP,
+		Direction: filter.DirectionRequest,
+		HTTP: &filter.HTTPMessage{
+			Method: r.Method,
+			Path:   r.URL.RequestURI(),
+			Header: r.Header,
+		},
+	}
+	if !p.filters.NeedsHTTPBody(filter.DirectionRequest) || r.Body == nil {
+		return message, nil
+	}
+
+	body, skipped, restored, err := inspectHTTPBody(r.Body)
+	if err != nil {
+		return filter.Message{}, err
+	}
+	r.Body = restored
+	message.HTTP.Body = body
+	message.HTTP.BodySkipped = skipped
+	return message, nil
+}
+
+func (p *HTTPProxy) responseFilterMessage(res *http.Response) (filter.Message, error) {
+	message := filter.Message{
+		Protocol:  filter.ProtocolHTTP,
+		Direction: filter.DirectionResponse,
+		HTTP: &filter.HTTPMessage{
+			StatusCode: res.StatusCode,
+			Header:     res.Header,
+		},
+	}
+	if !p.filters.NeedsHTTPBody(filter.DirectionResponse) || res.Body == nil {
+		return message, nil
+	}
+
+	body, skipped, restored, err := inspectHTTPBody(res.Body)
+	if err != nil {
+		return filter.Message{}, err
+	}
+	res.Body = restored
+	message.HTTP.Body = body
+	message.HTTP.BodySkipped = skipped
+	return message, nil
+}
+
+func inspectHTTPBody(body io.ReadCloser) ([]byte, bool, io.ReadCloser, error) {
+	data, err := io.ReadAll(io.LimitReader(body, DefaultMaxFilterBodyBytes+1))
+	if err != nil {
+		return nil, false, nil, err
+	}
+	if int64(len(data)) <= DefaultMaxFilterBodyBytes {
+		if err := body.Close(); err != nil {
+			return nil, false, nil, err
+		}
+		return data, false, io.NopCloser(bytes.NewReader(data)), nil
+	}
+
+	return nil, true, &prefixedReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(data), body),
+		closer: body,
+	}, nil
+}
+
+type prefixedReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *prefixedReadCloser) Close() error {
+	return r.closer.Close()
+}
+
+func writeFilterRejection(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, "request rejected by proxy")
 }
 
 func (p *HTTPProxy) acquireSlot() bool {

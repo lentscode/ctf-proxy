@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/lentscode/ctf-proxy/internal/filter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,7 +33,27 @@ func TestHTTPProxyServeForwardsRequestAndResponse(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	proxyAddr, cancel, serveDone := startHTTPProxy(t, upstream.URL, make(chan struct{}, 1))
+	var sawRequestBody atomic.Bool
+	var sawResponseBody atomic.Bool
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "observe-bodies",
+		requirements: filter.Requirements{
+			Protocols:     []filter.Protocol{filter.ProtocolHTTP},
+			NeedsHTTPBody: true,
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			switch message.Direction {
+			case filter.DirectionRequest:
+				sawRequestBody.Store(string(message.HTTP.Body) == "request body")
+			case filter.DirectionResponse:
+				sawResponseBody.Store(string(message.HTTP.Body) == "upstream response")
+			}
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
 
 	request, err := http.NewRequest(http.MethodPost, "http://"+proxyAddr+"/widgets?filter=enabled", strings.NewReader("request body"))
 	require.NoError(t, err)
@@ -46,6 +68,8 @@ func TestHTTPProxyServeForwardsRequestAndResponse(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, response.StatusCode)
 	assert.Equal(t, "response-value", response.Header.Get("X-Response-Header"))
 	assert.Equal(t, "upstream response", string(body))
+	assert.True(t, sawRequestBody.Load())
+	assert.True(t, sawResponseBody.Load())
 
 	cancel()
 	requireProxyStopped(t, serveDone)
@@ -97,14 +121,249 @@ func TestHTTPProxyServeRejectsRequestsWhenSlotsAreFull(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+func TestHTTPProxyRejectsRequestBeforeUpstream(t *testing.T) {
+	upstreamCalled := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		upstreamCalled <- struct{}{}
+	}))
+	defer upstream.Close()
+
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-admin",
+		requirements: filter.Requirements{
+			Protocols:  []filter.Protocol{filter.ProtocolHTTP},
+			Directions: []filter.Direction{filter.DirectionRequest},
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			if message.HTTP.Path == "/admin?debug=true" {
+				return filter.Decision{Action: filter.ActionReject}, nil
+			}
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: time.Second}).Get("http://" + proxyAddr + "/admin?debug=true")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+	assert.Equal(t, "request rejected by proxy", string(body))
+
+	select {
+	case <-upstreamCalled:
+		t.Fatal("rejected request reached upstream")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
+func TestHTTPProxyRejectsResponseBeforeClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Blocked", "true")
+		_, _ = w.Write([]byte("upstream secret"))
+	}))
+	defer upstream.Close()
+
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-response",
+		requirements: filter.Requirements{
+			Protocols:  []filter.Protocol{filter.ProtocolHTTP},
+			Directions: []filter.Direction{filter.DirectionResponse},
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			if message.HTTP.Header.Get("X-Blocked") == "true" {
+				return filter.Decision{Action: filter.ActionReject}, nil
+			}
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: time.Second}).Get("http://" + proxyAddr + "/")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+	assert.Equal(t, "request rejected by proxy", string(body))
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
+func TestHTTPProxyRejectsRequestBodyBeforeUpstream(t *testing.T) {
+	upstreamCalled := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		upstreamCalled <- struct{}{}
+	}))
+	defer upstream.Close()
+
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-body",
+		requirements: filter.Requirements{
+			Protocols:     []filter.Protocol{filter.ProtocolHTTP},
+			Directions:    []filter.Direction{filter.DirectionRequest},
+			NeedsHTTPBody: true,
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			if string(message.HTTP.Body) == "blocked body" {
+				return filter.Decision{Action: filter.ActionReject}, nil
+			}
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: time.Second}).Post("http://"+proxyAddr+"/", "text/plain", strings.NewReader("blocked body"))
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+	assert.Equal(t, "request rejected by proxy", string(body))
+
+	select {
+	case <-upstreamCalled:
+		t.Fatal("rejected request body reached upstream")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
+func TestHTTPProxyRejectsResponseBodyBeforeClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("upstream secret"))
+	}))
+	defer upstream.Close()
+
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "reject-response-body",
+		requirements: filter.Requirements{
+			Protocols:     []filter.Protocol{filter.ProtocolHTTP},
+			Directions:    []filter.Direction{filter.DirectionResponse},
+			NeedsHTTPBody: true,
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			if string(message.HTTP.Body) == "upstream secret" {
+				return filter.Decision{Action: filter.ActionReject}, nil
+			}
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: time.Second}).Get("http://" + proxyAddr + "/")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode)
+	assert.Equal(t, "request rejected by proxy", string(body))
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
+func TestHTTPProxyPreservesOversizedRequestBodyWhenFiltering(t *testing.T) {
+	payload := strings.Repeat("x", int(DefaultMaxFilterBodyBytes)+1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, payload, string(body))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	var skipped atomic.Bool
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "body-filter",
+		requirements: filter.Requirements{
+			Protocols:     []filter.Protocol{filter.ProtocolHTTP},
+			Directions:    []filter.Direction{filter.DirectionRequest},
+			NeedsHTTPBody: true,
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			skipped.Store(message.HTTP.BodySkipped)
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: time.Second}).Post("http://"+proxyAddr+"/", "application/octet-stream", strings.NewReader(payload))
+	require.NoError(t, err)
+	defer response.Body.Close()
+	assert.Equal(t, http.StatusNoContent, response.StatusCode)
+	assert.True(t, skipped.Load())
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
+func TestHTTPProxyPreservesOversizedResponseBodyWhenFiltering(t *testing.T) {
+	payload := strings.Repeat("x", int(DefaultMaxFilterBodyBytes)+1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer upstream.Close()
+
+	var skipped atomic.Bool
+	chain, err := filter.NewChain(proxyTestFilter{
+		name: "response-body-filter",
+		requirements: filter.Requirements{
+			Protocols:     []filter.Protocol{filter.ProtocolHTTP},
+			Directions:    []filter.Direction{filter.DirectionResponse},
+			NeedsHTTPBody: true,
+		},
+		evaluate: func(message filter.Message) (filter.Decision, error) {
+			skipped.Store(message.HTTP.BodySkipped)
+			return filter.Decision{Action: filter.ActionAllow}, nil
+		},
+	})
+	require.NoError(t, err)
+
+	proxyAddr, cancel, serveDone := startHTTPProxyWithFilters(t, upstream.URL, make(chan struct{}, 1), chain)
+	defer cancel()
+	response, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + proxyAddr + "/")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, payload, string(body))
+	assert.True(t, skipped.Load())
+
+	cancel()
+	requireProxyStopped(t, serveDone)
+}
+
 func startHTTPProxy(t *testing.T, upstreamURL string, slots chan struct{}) (string, context.CancelFunc, <-chan error) {
+	return startHTTPProxyWithFilters(t, upstreamURL, slots, nil)
+}
+
+func startHTTPProxyWithFilters(t *testing.T, upstreamURL string, slots chan struct{}, filters *filter.Chain) (string, context.CancelFunc, <-chan error) {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "localhost:0")
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	proxy := NewHTTPProxy("unused", upstreamURL, slots)
+	proxy := NewHTTPProxy("unused", upstreamURL, slots, filters)
 	serveDone := make(chan error, 1)
 	go func() {
 		serveDone <- proxy.serve(ctx, listener)
