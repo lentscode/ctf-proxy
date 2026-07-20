@@ -111,9 +111,10 @@ func validConfig() Config {
 	return Config{
 		Version:        Version,
 		MaxConnections: 10,
+		FilterFiles:    []string{"filters/common.yaml"},
 		Proxies: []Proxy{{
 			Name: "web", Active: true, Protocol: "http", Listen: ":8080", Upstream: "http://127.0.0.1:18080",
-			FilterFiles: []string{"filters/web.yaml"},
+			Filters: []string{"reject-debug-path"},
 		}},
 	}
 }

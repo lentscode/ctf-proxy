@@ -29,19 +29,20 @@ const MaxConnectionsLimit = 65_536
 // concurrent client connections for each proxy; zero selects the executable's
 // default.
 type Config struct {
-	Version        int     `yaml:"version"`
-	MaxConnections int     `yaml:"max_connections,omitempty"`
-	Proxies        []Proxy `yaml:"proxies"`
+	Version        int      `yaml:"version"`
+	MaxConnections int      `yaml:"max_connections,omitempty"`
+	FilterFiles    []string `yaml:"filter_files,omitempty"`
+	Proxies        []Proxy  `yaml:"proxies"`
 }
 
 // Proxy describes one public listener and its private upstream service.
 type Proxy struct {
-	Name        string   `yaml:"name"`
-	Active      bool     `yaml:"active"`
-	Protocol    string   `yaml:"protocol"`
-	Listen      string   `yaml:"listen"`
-	Upstream    string   `yaml:"upstream"`
-	FilterFiles []string `yaml:"filter_files,omitempty"`
+	Name     string   `yaml:"name"`
+	Active   bool     `yaml:"active"`
+	Protocol string   `yaml:"protocol"`
+	Listen   string   `yaml:"listen"`
+	Upstream string   `yaml:"upstream"`
+	Filters  []string `yaml:"filters,omitempty"`
 }
 
 // UnmarshalYAML defaults Active to true when it is omitted. A pointer is used
@@ -49,12 +50,12 @@ type Proxy struct {
 // absent field.
 func (p *Proxy) UnmarshalYAML(node *yaml.Node) error {
 	var decoded struct {
-		Name        string   `yaml:"name"`
-		Active      *bool    `yaml:"active"`
-		Protocol    string   `yaml:"protocol"`
-		Listen      string   `yaml:"listen"`
-		Upstream    string   `yaml:"upstream"`
-		FilterFiles []string `yaml:"filter_files,omitempty"`
+		Name     string   `yaml:"name"`
+		Active   *bool    `yaml:"active"`
+		Protocol string   `yaml:"protocol"`
+		Listen   string   `yaml:"listen"`
+		Upstream string   `yaml:"upstream"`
+		Filters  []string `yaml:"filters,omitempty"`
 	}
 	if err := node.Load(&decoded, yaml.WithKnownFields()); err != nil {
 		return err
@@ -68,7 +69,7 @@ func (p *Proxy) UnmarshalYAML(node *yaml.Node) error {
 	p.Protocol = decoded.Protocol
 	p.Listen = decoded.Listen
 	p.Upstream = decoded.Upstream
-	p.FilterFiles = decoded.FilterFiles
+	p.Filters = decoded.Filters
 	return nil
 }
 
@@ -203,6 +204,11 @@ func (c Config) Validate() error {
 	if len(c.Proxies) == 0 {
 		return errors.New("at least one proxy is required")
 	}
+	for index, path := range c.FilterFiles {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("filter_files at index %d is empty", index)
+		}
+	}
 
 	names := make(map[string]struct{}, len(c.Proxies))
 	listeners := make(map[string]struct{}, len(c.Proxies))
@@ -224,10 +230,11 @@ func (c Config) Validate() error {
 
 func clone(cfg Config) Config {
 	copy := cfg
+	copy.FilterFiles = append([]string(nil), cfg.FilterFiles...)
 	copy.Proxies = make([]Proxy, len(cfg.Proxies))
 	for index, proxy := range cfg.Proxies {
 		copy.Proxies[index] = proxy
-		copy.Proxies[index].FilterFiles = append([]string(nil), proxy.FilterFiles...)
+		copy.Proxies[index].Filters = append([]string(nil), proxy.Filters...)
 	}
 	return copy
 }
@@ -249,9 +256,9 @@ func (p Proxy) validate() error {
 	} else if err := validateHTTPUpstream(p.Upstream); err != nil {
 		return err
 	}
-	for index, path := range p.FilterFiles {
-		if strings.TrimSpace(path) == "" {
-			return fmt.Errorf("filter_files at index %d is empty", index)
+	for index, name := range p.Filters {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("filters at index %d is empty", index)
 		}
 	}
 	return nil

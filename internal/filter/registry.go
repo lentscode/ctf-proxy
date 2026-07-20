@@ -42,8 +42,9 @@ func (r *Registry) Register(name string, factory Factory) error {
 	return nil
 }
 
-// Build creates filters in names' order. Each name receives a distinct filter
-// instance from its registered factory.
+// Build creates filters in names' order. Factories may return an immutable
+// shared filter or a fresh instance, but every returned filter must be safe for
+// concurrent use.
 func (r *Registry) Build(names []string) ([]Filter, error) {
 	if r == nil {
 		return nil, fmt.Errorf("build filters: nil registry")

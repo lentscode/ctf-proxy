@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildRunnersLoadsFilterFilesRelativeToConfiguration(t *testing.T) {
+func TestBuildRunnersLoadsGlobalFilterFilesRelativeToConfiguration(t *testing.T) {
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "ctf-proxy.yaml")
 	filterPath := filepath.Join(directory, "filters.yaml")
@@ -29,27 +29,43 @@ filters:
 `), 0o600))
 
 	runners, err := buildRunners(config.Config{
-		Version: config.Version,
+		Version:     config.Version,
+		FilterFiles: []string{"filters.yaml"},
 		Proxies: []config.Proxy{{
 			Name: "web", Active: true, Protocol: "http", Listen: ":8080", Upstream: "http://127.0.0.1:18080",
-			FilterFiles: []string{"filters.yaml"},
+			Filters: []string{"only-requests"},
+		}, {
+			Name: "api", Active: true, Protocol: "http", Listen: ":8081", Upstream: "http://127.0.0.1:18081",
+			Filters: []string{"only-requests"},
 		}},
 	}, configPath)
 	require.NoError(t, err)
-	require.Len(t, runners, 1)
+	require.Len(t, runners, 2)
 	_, ok := runners[0].runner.(*proxy.HTTPProxy)
 	require.True(t, ok)
 }
 
-func TestBuildRunnersReportsMissingFilterFile(t *testing.T) {
+func TestBuildRunnersReportsMissingGlobalFilterFile(t *testing.T) {
+	_, err := buildRunners(config.Config{
+		Version:     config.Version,
+		FilterFiles: []string{"does-not-exist.yaml"},
+		Proxies: []config.Proxy{{
+			Name: "web", Active: true, Protocol: "http", Listen: ":8080", Upstream: "http://127.0.0.1:18080",
+		}},
+	}, filepath.Join(t.TempDir(), "ctf-proxy.yaml"))
+	require.ErrorContains(t, err, "load global YAML filters")
+}
+
+func TestBuildRunnersRejectsUnknownSelectedFilter(t *testing.T) {
 	_, err := buildRunners(config.Config{
 		Version: config.Version,
 		Proxies: []config.Proxy{{
 			Name: "web", Active: true, Protocol: "http", Listen: ":8080", Upstream: "http://127.0.0.1:18080",
-			FilterFiles: []string{"does-not-exist.yaml"},
+			Filters: []string{"missing"},
 		}},
 	}, filepath.Join(t.TempDir(), "ctf-proxy.yaml"))
-	require.ErrorContains(t, err, "load filters for proxy \"web\"")
+	require.ErrorContains(t, err, "resolve filters for proxy \"web\"")
+	require.ErrorContains(t, err, "not registered")
 }
 
 func TestBuildRunnersSkipsInactiveProxies(t *testing.T) {

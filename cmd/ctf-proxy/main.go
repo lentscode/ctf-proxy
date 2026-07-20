@@ -77,32 +77,51 @@ type namedRunner struct {
 }
 
 func buildRunners(cfg config.Config, configPath string) ([]namedRunner, error) {
+	registry := filter.NewRegistry()
+	if err := filter.RegisterBuiltins(registry); err != nil {
+		return nil, err
+	}
+
+	baseDirectory := filepath.Dir(configPath)
+	filterPaths := make([]string, len(cfg.FilterFiles))
+	for index, path := range cfg.FilterFiles {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(baseDirectory, path)
+		}
+		filterPaths[index] = path
+	}
+	yamlFilters, err := filter.LoadYAMLFiles(filterPaths)
+	if err != nil {
+		return nil, fmt.Errorf("load global YAML filters: %w", err)
+	}
+	for _, current := range yamlFilters {
+		compiled := current
+		if err := registry.Register(compiled.Name(), func() (filter.Filter, error) {
+			return compiled, nil
+		}); err != nil {
+			return nil, fmt.Errorf("register YAML filter %q: %w", compiled.Name(), err)
+		}
+	}
+
 	maxConnections := cfg.MaxConnections
 	if maxConnections == 0 {
 		maxConnections = defaultMaxConnections
 	}
 
-	baseDirectory := filepath.Dir(configPath)
 	runners := make([]namedRunner, 0, len(cfg.Proxies))
 	for _, definition := range cfg.Proxies {
-		if !definition.Active {
-			log.Printf("proxy %q is inactive; not starting", definition.Name)
-			continue
-		}
-		filterPaths := make([]string, len(definition.FilterFiles))
-		for index, path := range definition.FilterFiles {
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(baseDirectory, path)
-			}
-			filterPaths[index] = path
-		}
-		filters, err := filter.LoadYAMLFiles(filterPaths)
+		filters, err := registry.Build(definition.Filters)
 		if err != nil {
-			return nil, fmt.Errorf("load filters for proxy %q: %w", definition.Name, err)
+			return nil, fmt.Errorf("resolve filters for proxy %q: %w", definition.Name, err)
 		}
 		chain, err := filter.NewChain(filters...)
 		if err != nil {
 			return nil, fmt.Errorf("build filter chain for proxy %q: %w", definition.Name, err)
+		}
+
+		if !definition.Active {
+			log.Printf("proxy %q is inactive; not starting", definition.Name)
+			continue
 		}
 
 		current := namedRunner{
