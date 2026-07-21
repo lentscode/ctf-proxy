@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +18,7 @@ import (
 const (
 	defaultConfigPath  = "ctf-proxy.yaml"
 	defaultControlAddr = "127.0.0.1:8081"
+	defaultTokensFile  = ".tokens"
 )
 
 func main() {
@@ -52,7 +55,29 @@ func run(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: control.NewHandler(manager)}
+	tokensFile := os.Getenv("CTF_PROXY_TOKENS_FILE")
+	if tokensFile == "" {
+		tokensFile = defaultTokensFile
+	}
+	tokens, err := control.LoadTokens(tokensFile)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		tokens = nil
+	}
+	if len(tokens) == 0 {
+		token, err := control.GenerateToken()
+		if err != nil {
+			return fmt.Errorf("create initial control token: %w", err)
+		}
+		tokens = []string{token}
+		if err := control.SaveTokens(tokensFile, tokens); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "ctf-proxy: generated initial control token: %s\n", token)
+	}
+	server := &http.Server{Handler: control.NewHandler(manager, tokens)}
 	log.Printf("control API listening on http://%s", controlAddr)
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	err = server.Serve(listener)

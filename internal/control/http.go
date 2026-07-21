@@ -13,7 +13,8 @@ import (
 )
 
 // ListenLoopback binds addr only if its host resolves exclusively to loopback
-// addresses. Authentication is intentionally absent in this milestone.
+// addresses. The management API is authenticated, but loopback binding remains
+// a separate defense-in-depth boundary.
 func ListenLoopback(addr string) (net.Listener, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -41,11 +42,14 @@ func ListenLoopback(addr string) (net.Listener, error) {
 }
 
 // NewHandler returns the local control-plane HTTP handler.
-func NewHandler(manager *Manager) http.Handler {
-	return &api{manager: manager}
+func NewHandler(manager *Manager, tokens []string) http.Handler {
+	return &api{manager: manager, tokens: tokens}
 }
 
-type api struct{ manager *Manager }
+type api struct {
+	manager *Manager
+	tokens  []string
+}
 
 type proxyInput struct {
 	Name     string   `json:"name"`
@@ -57,6 +61,12 @@ type proxyInput struct {
 }
 
 func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := a.checkAuthMiddleware(r); err != nil {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		writeError(w, http.StatusUnauthorized, "unauthorized", "valid bearer token required")
+		return
+	}
+
 	if r.URL.Path == "/healthz" {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)

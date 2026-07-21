@@ -24,13 +24,15 @@ func TestAPIStartsEmptyAndManagesInactiveProxy(t *testing.T) {
 	require.NoError(t, manager.Start(context.Background()))
 	t.Cleanup(manager.Close)
 
-	handler := NewHandler(manager)
+	handler := NewHandler(manager, []string{"test-token"})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxies", strings.NewReader(`{"name":"staged","active":false,"protocol":"tcp","listen":"127.0.0.1:31337","upstream":"127.0.0.1:31338"}`))
+	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusCreated, response.Code)
 
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/proxies", nil)
+	request.Header.Set("Authorization", "Bearer test-token")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
@@ -42,6 +44,7 @@ func TestAPIStartsEmptyAndManagesInactiveProxy(t *testing.T) {
 	require.Equal(t, StateInactive, body.Proxies[0].State)
 
 	request = httptest.NewRequest(http.MethodDelete, "/api/v1/proxies/staged", nil)
+	request.Header.Set("Authorization", "Bearer test-token")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusNoContent, response.Code)
@@ -62,8 +65,9 @@ func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	t.Cleanup(manager.Close)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxies", strings.NewReader(`{"name":"web","active":false,"protocol":"tcp","listen":"127.0.0.1:31337","upstream":"127.0.0.1:31338","filters":["missing"]}`))
+	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()
-	NewHandler(manager).ServeHTTP(response, request)
+	NewHandler(manager, []string{"test-token"}).ServeHTTP(response, request)
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Empty(t, store.Snapshot().Proxies)
 }
@@ -83,8 +87,9 @@ func TestAPIReportsListenerConflict(t *testing.T) {
 
 	body := `{"name":"web","protocol":"tcp","listen":"` + occupied.Addr().String() + `","upstream":"127.0.0.1:31338"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxies", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()
-	NewHandler(manager).ServeHTTP(response, request)
+	NewHandler(manager, []string{"test-token"}).ServeHTTP(response, request)
 	require.Equal(t, http.StatusConflict, response.Code)
 	require.Empty(t, store.Snapshot().Proxies)
 }
@@ -95,4 +100,45 @@ func TestListenLoopback(t *testing.T) {
 	require.NoError(t, listener.Close())
 	_, err = ListenLoopback("0.0.0.0:0")
 	require.ErrorContains(t, err, "loopback")
+}
+
+func TestAPIRequiresValidBearerToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	handler := NewHandler(manager, []string{"correct-token"})
+
+	for _, authorization := range []string{"", "Basic correct-token", "Bearer wrong-token"} {
+		request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		request.Header.Set("Authorization", authorization)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		require.Equal(t, http.StatusUnauthorized, response.Code)
+		require.Equal(t, "Bearer", response.Header().Get("WWW-Authenticate"))
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Header.Set("Authorization", "Bearer correct-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+}
+
+func TestTokenFileRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens")
+	token, err := GenerateToken()
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	require.NoError(t, SaveTokens(path, []string{token}))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	tokens, err := LoadTokens(path)
+	require.NoError(t, err)
+	require.Equal(t, []string{token}, tokens)
 }
