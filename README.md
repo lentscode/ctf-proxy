@@ -55,9 +55,10 @@ list is valid.
 
 ## Local control API
 
-The binary serves an unauthenticated management API at `127.0.0.1:8081` by
-default. Use `CTF_PROXY_CONTROL_ADDR` to select another **loopback-only**
-address. Non-loopback listeners are rejected until authentication is added.
+The binary serves an authenticated management API at `127.0.0.1:8081` by
+default. On its first startup it creates a bearer token in `.tokens` (mode
+`0600`) and prints it once to stderr. Use `CTF_PROXY_CONTROL_ADDR` to select
+another **loopback-only** address; non-loopback listeners are rejected.
 
 The API creates, replaces, activates, deactivates, and removes only the
 affected proxy listener; it does not restart unrelated proxies. It persists
@@ -65,26 +66,49 @@ accepted changes atomically to the main configuration file.
 
 ```sh
 # Inspect health and configured proxies.
-curl http://127.0.0.1:8081/healthz
-curl http://127.0.0.1:8081/api/v1/proxies
+curl -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/healthz
+curl -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/api/v1/proxies
 
 # Add a TCP proxy.
 curl -X POST http://127.0.0.1:8081/api/v1/proxies \
+  -H "Authorization: Bearer $CTF_PROXY_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"challenge","protocol":"tcp","listen":":31337","upstream":"127.0.0.1:31338","filters":[]}'
 
 # Stage, activate, or remove a proxy.
-curl -X POST http://127.0.0.1:8081/api/v1/proxies/challenge/deactivate
-curl -X POST http://127.0.0.1:8081/api/v1/proxies/challenge/activate
-curl -X DELETE http://127.0.0.1:8081/api/v1/proxies/challenge
+curl -X POST -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/api/v1/proxies/challenge/deactivate
+curl -X POST -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/api/v1/proxies/challenge/activate
+curl -X DELETE -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/api/v1/proxies/challenge
 
 # List the configured built-in and YAML filter names available to proxies.
-curl http://127.0.0.1:8081/api/v1/filters
+curl -H "Authorization: Bearer $CTF_PROXY_TOKEN" http://127.0.0.1:8081/api/v1/filters
 ```
 
 This MVP only attaches existing filter names to proxies. YAML filter files are
 loaded and validated at process startup; authoring or reloading filter files
 through the API is intentionally deferred.
+
+## Observability
+
+Warnings, errors, and filter rejections are emitted as structured JSON to
+stderr and kept in a shared, in-memory event history for the local dashboard.
+The history holds the newest 512 events, is never consumed by a reader, and is
+lost on process restart. Events deliberately exclude traffic payloads, HTTP
+headers, URLs, peer addresses, and credentials.
+
+```sh
+# Fetch the most recent events (default: 100; maximum: 512).
+curl -H "Authorization: Bearer $CTF_PROXY_TOKEN" \
+  'http://127.0.0.1:8081/api/v1/events?limit=100'
+
+# Subscribe to new events using Server-Sent Events.
+curl -N -H "Authorization: Bearer $CTF_PROXY_TOKEN" \
+  http://127.0.0.1:8081/api/v1/events/stream
+```
+
+At most 16 live stream clients are supported. A client that cannot keep up is
+disconnected; its browser should reconnect and fetch a fresh snapshot. Event
+production never waits for dashboard clients or stderr writes.
 
 ## Development
 

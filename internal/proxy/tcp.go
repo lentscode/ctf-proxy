@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
 const tcpFilterBufferSize = 32 << 10
@@ -21,15 +22,24 @@ type TCPProxy struct {
 
 	slots chan struct{}
 
-	filters *filter.Chain
+	filters  *filter.Chain
+	reporter observe.Reporter
 }
 
-func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain) *TCPProxy {
+func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *TCPProxy {
+	var reporter observe.Reporter
+	if len(reporters) > 0 {
+		reporter = reporters[0]
+	}
+	if reporter == nil {
+		reporter = observe.NopReporter{}
+	}
 	return &TCPProxy{
 		listenAddr:   listenAddr,
 		upstreamAddr: upstreamAddr,
 		slots:        slots,
 		filters:      filters,
+		reporter:     reporter,
 	}
 }
 
@@ -82,6 +92,7 @@ func (p *TCPProxy) forward(client net.Conn) error {
 	//TODO(lentscode): add timeout
 	upstream, err := net.Dial("tcp", p.upstreamAddr)
 	if err != nil {
+		p.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyUpstreamUnavailable, Message: "TCP upstream unavailable"})
 		return err
 	}
 	defer upstream.Close()

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
 var _ http.Handler = &HTTPProxy{}
@@ -31,14 +32,23 @@ type HTTPProxy struct {
 	transport *http.Transport
 	upstream  *url.URL
 	filters   *filter.Chain
+	reporter  observe.Reporter
 }
 
-func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain) *HTTPProxy {
+func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *HTTPProxy {
+	var reporter observe.Reporter
+	if len(reporters) > 0 {
+		reporter = reporters[0]
+	}
+	if reporter == nil {
+		reporter = observe.NopReporter{}
+	}
 	return &HTTPProxy{
 		listenAddr:  listenAddr,
 		upstreamUrl: upstreamUrl,
 		slots:       slots,
 		filters:     filters,
+		reporter:    reporter,
 	}
 }
 
@@ -147,6 +157,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	res, err := p.transport.RoundTrip(outbound)
 	if err != nil {
+		p.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyUpstreamUnavailable, Message: "HTTP upstream unavailable"})
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}

@@ -7,9 +7,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/config"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
 // ListenLoopback binds addr only if its host resolves exclusively to loopback
@@ -42,13 +45,18 @@ func ListenLoopback(addr string) (net.Listener, error) {
 }
 
 // NewHandler returns the local control-plane HTTP handler.
-func NewHandler(manager *Manager, tokens []string) http.Handler {
-	return &api{manager: manager, tokens: tokens}
+func NewHandler(manager *Manager, tokens []string, hubs ...*observe.Hub) http.Handler {
+	var hub *observe.Hub
+	if len(hubs) > 0 {
+		hub = hubs[0]
+	}
+	return &api{manager: manager, tokens: tokens, hub: hub}
 }
 
 type api struct {
 	manager *Manager
 	tokens  []string
+	hub     *observe.Hub
 }
 
 type proxyInput struct {
@@ -87,12 +95,102 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"filters": a.manager.ListFilters()})
 		return
 	}
+	if r.URL.Path == "/api/v1/events" {
+		a.events(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/events/stream" {
+		a.eventStream(w, r)
+		return
+	}
 	const prefix = "/api/v1/proxies/"
 	if strings.HasPrefix(r.URL.Path, prefix) {
 		a.proxy(w, r, strings.TrimPrefix(r.URL.Path, prefix))
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+func (a *api) events(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > observe.HistoryCapacity {
+			writeError(w, http.StatusBadRequest, "validation_error", fmt.Sprintf("limit must be between 1 and %d", observe.HistoryCapacity))
+			return
+		}
+		limit = parsed
+	}
+	if a.hub == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"events": []observe.Event{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": a.hub.Snapshot(limit)})
+}
+
+func (a *api) eventStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if a.hub == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "event streaming is unavailable")
+		return
+	}
+	subscription, ok := a.hub.Subscribe()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "event stream capacity reached")
+		return
+	}
+	defer a.hub.Unsubscribe(subscription)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	controller := http.NewResponseController(w)
+	if !writeSSEComment(w, controller, "connected") {
+		return
+	}
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-subscription.Events():
+			if !ok || !writeSSEEvent(w, controller, event) {
+				return
+			}
+		case <-ticker.C:
+			if !writeSSEComment(w, controller, "heartbeat") {
+				return
+			}
+		}
+	}
+}
+
+func writeSSEComment(w http.ResponseWriter, controller *http.ResponseController, value string) bool {
+	_ = controller.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	if _, err := fmt.Fprintf(w, ": %s\n\n", value); err != nil {
+		return false
+	}
+	return controller.Flush() == nil
+}
+
+func writeSSEEvent(w http.ResponseWriter, controller *http.ResponseController, event observe.Event) bool {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return false
+	}
+	_ = controller.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: observe\ndata: %s\n\n", event.ID, data); err != nil {
+		return false
+	}
+	return controller.Flush() == nil
 }
 
 func (a *api) proxies(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,10 @@
 package control
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/config"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,4 +145,95 @@ func TestTokenFileRoundTrip(t *testing.T) {
 	tokens, err := LoadTokens(path)
 	require.NoError(t, err)
 	require.Equal(t, []string{token}, tokens)
+}
+
+func TestAPIEventsSnapshotRequiresAuthAndDoesNotConsume(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	observer := observe.NewObserver(io.Discard)
+	t.Cleanup(observer.Close)
+	hub := observer.Hub()
+	observer.Report(observe.Event{Level: observe.LevelWarn, Component: observe.ComponentFilter, Kind: observe.KindFilterRejected, Message: "rejected"})
+	handler := NewHandler(manager, []string{"test-token"}, hub)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/events?limit=1", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusUnauthorized, response.Code)
+
+	request.Header.Set("Authorization", "Bearer test-token")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Events []observe.Event `json:"events"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Events, 1)
+	assertSnapshot := hub.Snapshot(1)
+	require.Len(t, assertSnapshot, 1)
+	require.Equal(t, body.Events[0].ID, assertSnapshot[0].ID)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/events?limit=513", nil)
+	request.Header.Set("Authorization", "Bearer test-token")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestAPIEventStreamDeliversNewEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	observer := observe.NewObserver(io.Discard)
+	t.Cleanup(observer.Close)
+	hub := observer.Hub()
+	server := httptest.NewServer(NewHandler(manager, []string{"test-token"}, hub))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/v1/events/stream", nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer test-token")
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(t, "text/event-stream", response.Header.Get("Content-Type"))
+
+	reader := bufio.NewReader(response.Body)
+	_, err = reader.ReadString('\n') // initial comment
+	require.NoError(t, err)
+	_, err = reader.ReadString('\n')
+	require.NoError(t, err)
+	observer.Report(observe.Event{Level: observe.LevelWarn, Component: observe.ComponentFilter, Kind: observe.KindFilterRejected, Message: "rejected"})
+	result := make(chan string, 1)
+	go func() {
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				return
+			}
+			if strings.HasPrefix(line, "data: ") {
+				result <- line
+				return
+			}
+		}
+	}()
+	select {
+	case line := <-result:
+		require.Contains(t, line, `"kind":"filter_rejected"`)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SSE event")
+	}
 }

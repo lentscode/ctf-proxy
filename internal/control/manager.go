@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"path/filepath"
 	"reflect"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 	"github.com/lentscode/ctf-proxy/internal/proxy"
 )
 
@@ -64,6 +64,7 @@ type Manager struct {
 	mu       sync.Mutex
 	store    *config.Store
 	registry *filter.Registry
+	reporter observe.Reporter
 	filters  []FilterView
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -73,9 +74,13 @@ type Manager struct {
 
 // NewManager loads the immutable startup filter catalog and constructs a
 // manager. The supplied store must remain owned by this manager.
-func NewManager(store *config.Store, configPath string) (*Manager, error) {
+func NewManager(store *config.Store, configPath string, reporters ...observe.Reporter) (*Manager, error) {
 	if store == nil {
 		return nil, errors.New("new control manager: nil configuration store")
+	}
+	var reporter observe.Reporter = observe.NopReporter{}
+	if len(reporters) > 0 && reporters[0] != nil {
+		reporter = reporters[0]
 	}
 	registry := filter.NewRegistry()
 	if err := filter.RegisterBuiltins(registry); err != nil {
@@ -101,7 +106,7 @@ func NewManager(store *config.Store, configPath string) (*Manager, error) {
 		}
 		views = append(views, describeFilter(compiled, "yaml"))
 	}
-	return &Manager{store: store, registry: registry, filters: views, running: make(map[string]*managedProxy), states: make(map[string]State)}, nil
+	return &Manager{store: store, registry: registry, reporter: reporter, filters: views, running: make(map[string]*managedProxy), states: make(map[string]State)}, nil
 }
 
 // Start starts all active configured proxies. It is valid for cfg to contain no
@@ -179,6 +184,7 @@ func (m *Manager) Create(definition config.Proxy) (ProxyView, error) {
 	}
 	next.Proxies = append(next.Proxies, definition)
 	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
 		return ProxyView{}, err
 	}
 	return m.viewLocked(definition), nil
@@ -195,6 +201,7 @@ func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, erro
 	definition.Name = name
 	next.Proxies[index] = definition
 	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
 		return ProxyView{}, err
 	}
 	return m.viewLocked(definition), nil
@@ -209,7 +216,11 @@ func (m *Manager) Delete(name string) error {
 		return ErrNotFound
 	}
 	next.Proxies = append(next.Proxies[:index:index], next.Proxies[index+1:]...)
-	return m.applyLocked(next)
+	err := m.applyLocked(next)
+	if err != nil {
+		m.reportControlFailure(err)
+	}
+	return err
 }
 
 func (m *Manager) SetActive(name string, active bool) (ProxyView, error) {
@@ -227,6 +238,7 @@ func (m *Manager) SetActive(name string, active bool) (ProxyView, error) {
 		delete(m.running, name)
 	}
 	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
 		return ProxyView{}, err
 	}
 	return m.viewLocked(next.Proxies[index]), nil
@@ -291,7 +303,7 @@ func (m *Manager) restoreLocked(definitions []config.Proxy) {
 	for _, definition := range definitions {
 		if err := m.startLocked(definition); err != nil {
 			m.states[definition.Name] = StateFailed
-			log.Printf("restore proxy %q after failed configuration update: %v", definition.Name, err)
+			m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyRestoreFailed, Proxy: definition.Name, Message: "proxy restore failed after configuration update"})
 		}
 	}
 }
@@ -303,6 +315,7 @@ func (m *Manager) startLocked(definition config.Proxy) error {
 	}
 	listener, err := net.Listen("tcp", definition.Listen)
 	if err != nil {
+		m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyListenerFailed, Proxy: definition.Name, Message: "proxy listener could not be started"})
 		return fmt.Errorf("%w: listen on %s: %v", ErrConflict, definition.Listen, err)
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
@@ -318,7 +331,7 @@ func (m *Manager) startLocked(definition config.Proxy) error {
 			delete(m.running, definition.Name)
 			if ctx.Err() == nil && err != nil {
 				m.states[definition.Name] = StateFailed
-				log.Printf("proxy %q stopped unexpectedly: %v", definition.Name, err)
+				m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyStoppedUnexpectedly, Proxy: definition.Name, Message: "proxy stopped unexpectedly"})
 			}
 		}
 	}()
@@ -346,7 +359,7 @@ func (m *Manager) runnerFor(definition config.Proxy) (proxy.Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve filters: %w", err)
 	}
-	chain, err := filter.NewChain(filters...)
+	chain, err := filter.NewChainWithEventSink(observe.FilterSink(m.reporter, definition.Name), filters...)
 	if err != nil {
 		return nil, err
 	}
@@ -357,12 +370,20 @@ func (m *Manager) runnerFor(definition config.Proxy) (proxy.Runner, error) {
 	slots := make(chan struct{}, maxConnections)
 	switch definition.Protocol {
 	case "tcp":
-		return proxy.NewTCPProxy(definition.Listen, definition.Upstream, slots, chain), nil
+		return proxy.NewTCPProxy(definition.Listen, definition.Upstream, slots, chain, observe.WithProxy(m.reporter, definition.Name)), nil
 	case "http":
-		return proxy.NewHTTPProxy(definition.Listen, definition.Upstream, slots, chain), nil
+		return proxy.NewHTTPProxy(definition.Listen, definition.Upstream, slots, chain, observe.WithProxy(m.reporter, definition.Name)), nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", definition.Protocol)
 	}
+}
+
+func (m *Manager) reportControlFailure(err error) {
+	kind, message := observe.KindControlConfigurationRejected, "configuration update rejected"
+	if errors.Is(err, ErrPersistence) {
+		kind, message = observe.KindControlConfigurationPersistenceFailed, "configuration persistence failed"
+	}
+	m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentControl, Kind: kind, Message: message})
 }
 
 func (m *Manager) viewLocked(definition config.Proxy) ProxyView {

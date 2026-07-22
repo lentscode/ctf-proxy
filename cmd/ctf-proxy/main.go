@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/control"
+	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
 const (
@@ -30,16 +31,20 @@ func main() {
 		configPath = defaultConfigPath
 	}
 	if err := run(ctx, configPath); err != nil {
-		log.Fatal(err)
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("ctf-proxy stopped", "error", observe.SanitizeMessage(err.Error()))
+		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, configPath string) error {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	observation := observe.NewObserver(os.Stderr)
+	defer observation.Close()
 	store, err := config.OpenOrCreateStore(configPath)
 	if err != nil {
 		return err
 	}
-	manager, err := control.NewManager(store, configPath)
+	manager, err := control.NewManager(store, configPath, observation)
 	if err != nil {
 		return err
 	}
@@ -77,8 +82,8 @@ func run(ctx context.Context, configPath string) error {
 		}
 		fmt.Fprintf(os.Stderr, "ctf-proxy: generated initial control token: %s\n", token)
 	}
-	server := &http.Server{Handler: control.NewHandler(manager, tokens)}
-	log.Printf("control API listening on http://%s", controlAddr)
+	server := &http.Server{Handler: control.NewHandler(manager, tokens, observation.Hub())}
+	logger.Info("control API listening", "address", controlAddr)
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	err = server.Serve(listener)
 	if err == http.ErrServerClosed {
