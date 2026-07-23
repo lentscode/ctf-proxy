@@ -76,6 +76,160 @@ func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	require.Empty(t, store.Snapshot().Proxies)
 }
 
+func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	handler := NewHandler(manager, []string{"test-token"})
+
+	proxyBody := `{"name":"web","active":false,"protocol":"http","listen":"127.0.0.1:31337","upstream":"http://127.0.0.1:31338"}`
+	response := serveAPI(handler, http.MethodPost, "/api/v1/proxies", proxyBody)
+	require.Equal(t, http.StatusCreated, response.Code)
+
+	source := yamlFilterDocument("block-admin", "/admin")
+	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/filters", `{"yaml":`+jsonString(source)+`}`)
+	require.Equal(t, http.StatusCreated, response.Code)
+	var created ManagedFilterView
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+	require.Equal(t, "block-admin", created.Name)
+	require.True(t, created.Editable)
+	require.Equal(t, source, created.YAML)
+	require.Equal(t, []string{"web"}, created.AssignedProxies)
+	require.Equal(t, []string{"block-admin"}, store.Snapshot().Proxies[0].Filters)
+	require.Equal(t, source, store.Snapshot().ManagedYAMLFilters[0].YAML)
+
+	response = serveAPI(handler, http.MethodGet, "/api/v1/proxies/web/filters", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var assigned struct {
+		Filters []FilterView `json:"filters"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &assigned))
+	require.Len(t, assigned.Filters, 1)
+	require.True(t, assigned.Filters[0].Editable)
+
+	updated := yamlFilterDocument("block-admin", "/private")
+	response = serveAPI(handler, http.MethodPut, "/api/v1/filters/block-admin", `{"yaml":`+jsonString(updated)+`}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, updated, store.Snapshot().ManagedYAMLFilters[0].YAML)
+
+	response = serveAPI(handler, http.MethodDelete, "/api/v1/filters/block-admin", "")
+	require.Equal(t, http.StatusConflict, response.Code)
+	require.Contains(t, response.Body.String(), "web")
+
+	response = serveAPI(handler, http.MethodDelete, "/api/v1/proxies/web", "")
+	require.Equal(t, http.StatusNoContent, response.Code)
+	require.Len(t, store.Snapshot().ManagedYAMLFilters, 1)
+	response = serveAPI(handler, http.MethodGet, "/api/v1/filters/block-admin", "")
+	require.Equal(t, http.StatusOK, response.Code)
+
+	response = serveAPI(handler, http.MethodDelete, "/api/v1/filters/block-admin", "")
+	require.Equal(t, http.StatusNoContent, response.Code)
+	require.Empty(t, store.Snapshot().ManagedYAMLFilters)
+}
+
+func TestAPIManagedYAMLFilterValidation(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		arrange    func(t *testing.T, handler http.Handler)
+		method     string
+		path       string
+		body       string
+		wantStatus int
+		wantBody   string
+		assert     func(t *testing.T, store *config.Store)
+	}{
+		{
+			name: "invalid JSON", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{`, wantStatus: http.StatusBadRequest, wantBody: "invalid JSON",
+		},
+		{
+			name: "unknown JSON field", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":"version: 1\nfilters: []\n","extra":true}`, wantStatus: http.StatusBadRequest, wantBody: "unknown field",
+		},
+		{
+			name: "zero YAML rules", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":"version: 1\nfilters: []\n"}`, wantStatus: http.StatusBadRequest, wantBody: "exactly one filter",
+		},
+		{
+			name: "missing proxy", method: http.MethodPost, path: "/api/v1/proxies/missing/filters", body: `{"yaml":` + jsonString(yamlFilterDocument("new-rule", "/admin")) + `}`, wantStatus: http.StatusNotFound,
+		},
+		{
+			name:    "duplicate managed name",
+			arrange: arrangeManagedFilter("stable"), method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":` + jsonString(yamlFilterDocument("stable", "/private")) + `}`, wantStatus: http.StatusConflict, wantBody: "already exists",
+			assert: func(t *testing.T, store *config.Store) { require.Len(t, store.Snapshot().ManagedYAMLFilters, 1) },
+		},
+		{
+			name:    "renamed rule",
+			arrange: arrangeManagedFilter("stable"), method: http.MethodPut, path: "/api/v1/filters/stable", body: `{"yaml":` + jsonString(yamlFilterDocument("changed", "/admin")) + `}`, wantStatus: http.StatusBadRequest, wantBody: "does not match",
+			assert: func(t *testing.T, store *config.Store) {
+				require.Equal(t, "stable", store.Snapshot().ManagedYAMLFilters[0].Name)
+			},
+		},
+		{
+			name: "file or built-in style unknown filter detail", method: http.MethodGet, path: "/api/v1/filters/missing", wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "missing filter delete", method: http.MethodDelete, path: "/api/v1/filters/missing", wantStatus: http.StatusNotFound,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store, handler := newFilterAPITestServer(t)
+			if testCase.arrange != nil {
+				testCase.arrange(t, handler)
+			}
+			response := serveAPI(handler, testCase.method, testCase.path, testCase.body)
+			require.Equal(t, testCase.wantStatus, response.Code)
+			if testCase.wantBody != "" {
+				require.Contains(t, response.Body.String(), testCase.wantBody)
+			}
+			if testCase.assert != nil {
+				testCase.assert(t, store)
+			}
+		})
+	}
+}
+
+func newFilterAPITestServer(t *testing.T) (*config.Store, http.Handler) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	handler := NewHandler(manager, []string{"test-token"})
+	response := serveAPI(handler, http.MethodPost, "/api/v1/proxies", `{"name":"web","active":false,"protocol":"tcp","listen":"127.0.0.1:31337","upstream":"127.0.0.1:31338"}`)
+	require.Equal(t, http.StatusCreated, response.Code)
+	return store, handler
+}
+
+func arrangeManagedFilter(name string) func(t *testing.T, handler http.Handler) {
+	return func(t *testing.T, handler http.Handler) {
+		t.Helper()
+		response := serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/filters", `{"yaml":`+jsonString(yamlFilterDocument(name, "/admin"))+`}`)
+		require.Equal(t, http.StatusCreated, response.Code)
+	}
+}
+
+func serveAPI(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer test-token")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func jsonString(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func yamlFilterDocument(name, path string) string {
+	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: " + path + "\n"
+}
+
 func TestAPIReportsListenerConflict(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

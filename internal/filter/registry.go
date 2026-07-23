@@ -2,6 +2,7 @@ package filter
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -12,6 +13,21 @@ type Factory func() (Filter, error)
 type Registry struct {
 	mu        sync.RWMutex
 	factories map[string]Factory
+}
+
+// Names returns the registered filter names in deterministic order.
+func (r *Registry) Names() []string {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.factories))
+	for name := range r.factories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NewRegistry returns an empty registry.

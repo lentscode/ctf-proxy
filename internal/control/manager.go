@@ -8,6 +8,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/lentscode/ctf-proxy/internal/config"
@@ -48,9 +49,24 @@ type ProxyView struct {
 type FilterView struct {
 	Name          string   `json:"name"`
 	Source        string   `json:"source"`
+	Editable      bool     `json:"editable"`
 	Protocols     []string `json:"protocols"`
 	Directions    []string `json:"directions"`
 	NeedsHTTPBody bool     `json:"needs_http_body"`
+}
+
+// ManagedFilterView is the API representation of an editable YAML filter.
+type ManagedFilterView struct {
+	FilterView
+	YAML            string   `json:"yaml"`
+	AssignedProxies []string `json:"assigned_proxies"`
+}
+
+type filterCatalog struct {
+	registry *filter.Registry
+	views    []FilterView
+	byName   map[string]FilterView
+	managed  map[string]config.ManagedYAMLFilter
 }
 
 type managedProxy struct {
@@ -61,15 +77,15 @@ type managedProxy struct {
 
 // Manager serializes configuration changes and reconciles affected listeners.
 type Manager struct {
-	mu       sync.Mutex
-	store    *config.Store
-	registry *filter.Registry
-	reporter observe.Reporter
-	filters  []FilterView
-	ctx      context.Context
-	cancel   context.CancelFunc
-	running  map[string]*managedProxy
-	states   map[string]State
+	mu         sync.Mutex
+	store      *config.Store
+	reporter   observe.Reporter
+	configPath string
+	catalog    *filterCatalog
+	ctx        context.Context
+	cancel     context.CancelFunc
+	running    map[string]*managedProxy
+	states     map[string]State
 }
 
 // NewManager loads the immutable startup filter catalog and constructs a
@@ -82,31 +98,14 @@ func NewManager(store *config.Store, configPath string, reporters ...observe.Rep
 	if len(reporters) > 0 && reporters[0] != nil {
 		reporter = reporters[0]
 	}
-	registry := filter.NewRegistry()
-	if err := filter.RegisterBuiltins(registry); err != nil {
+	cfg := store.Snapshot()
+	manager := &Manager{store: store, reporter: reporter, configPath: configPath, running: make(map[string]*managedProxy), states: make(map[string]State)}
+	catalog, err := manager.catalogFor(cfg)
+	if err != nil {
 		return nil, err
 	}
-	cfg := store.Snapshot()
-	paths := make([]string, len(cfg.FilterFiles))
-	for i, path := range cfg.FilterFiles {
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(filepath.Dir(configPath), path)
-		}
-		paths[i] = path
-	}
-	yamlFilters, err := filter.LoadYAMLFiles(paths)
-	if err != nil {
-		return nil, fmt.Errorf("load global YAML filters: %w", err)
-	}
-	views := make([]FilterView, 0, len(yamlFilters))
-	for _, current := range yamlFilters {
-		compiled := current
-		if err := registry.Register(compiled.Name(), func() (filter.Filter, error) { return compiled, nil }); err != nil {
-			return nil, fmt.Errorf("register YAML filter %q: %w", compiled.Name(), err)
-		}
-		views = append(views, describeFilter(compiled, "yaml"))
-	}
-	return &Manager{store: store, registry: registry, reporter: reporter, filters: views, running: make(map[string]*managedProxy), states: make(map[string]State)}, nil
+	manager.catalog = catalog
+	return manager, nil
 }
 
 // Start starts all active configured proxies. It is valid for cfg to contain no
@@ -120,7 +119,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	cfg := m.store.Snapshot()
 	for _, definition := range cfg.Proxies {
-		if _, err := m.runnerFor(definition); err != nil {
+		if _, err := m.runnerFor(definition, m.catalog, cfg.MaxConnections); err != nil {
 			m.cancel()
 			return fmt.Errorf("build proxy %q: %w", definition.Name, err)
 		}
@@ -130,7 +129,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.states[definition.Name] = StateInactive
 			continue
 		}
-		if err := m.startLocked(definition); err != nil {
+		if err := m.startLocked(definition, m.catalog, cfg.MaxConnections); err != nil {
 			m.stopAllLocked()
 			return fmt.Errorf("start proxy %q: %w", definition.Name, err)
 		}
@@ -172,7 +171,101 @@ func (m *Manager) Get(name string) (ProxyView, error) {
 func (m *Manager) ListFilters() []FilterView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]FilterView(nil), m.filters...)
+	return append([]FilterView(nil), m.catalog.views...)
+}
+
+func (m *Manager) GetManagedFilter(name string) (ManagedFilterView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	managed, ok := m.catalog.managed[name]
+	if !ok {
+		return ManagedFilterView{}, ErrNotFound
+	}
+	view := m.catalog.byName[name]
+	return ManagedFilterView{FilterView: view, YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}, nil
+}
+
+func (m *Manager) ListProxyFilters(name string) ([]FilterView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	definition, ok := findProxy(m.store.Snapshot(), name)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	views := make([]FilterView, 0, len(definition.Filters))
+	for _, filterName := range definition.Filters {
+		if view, exists := m.catalog.byName[filterName]; exists {
+			views = append(views, view)
+		}
+	}
+	return views, nil
+}
+
+func (m *Manager) CreateManagedFilter(proxyName, source string) (ManagedFilterView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := m.store.Snapshot()
+	index := proxyIndex(next, proxyName)
+	if index < 0 {
+		return ManagedFilterView{}, ErrNotFound
+	}
+	compiled, err := singleYAMLFilter(source)
+	if err != nil {
+		return ManagedFilterView{}, err
+	}
+	name := compiled.Name()
+	if _, exists := m.catalog.byName[name]; exists {
+		return ManagedFilterView{}, fmt.Errorf("%w: filter %q already exists", ErrConflict, name)
+	}
+	next.ManagedYAMLFilters = append(next.ManagedYAMLFilters, config.ManagedYAMLFilter{Name: name, YAML: source})
+	next.Proxies[index].Filters = append(next.Proxies[index].Filters, name)
+	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
+		return ManagedFilterView{}, err
+	}
+	return m.managedViewLocked(name), nil
+}
+
+func (m *Manager) ReplaceManagedFilter(name, source string) (ManagedFilterView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := m.store.Snapshot()
+	index := managedFilterIndex(next, name)
+	if index < 0 {
+		return ManagedFilterView{}, ErrNotFound
+	}
+	compiled, err := singleYAMLFilter(source)
+	if err != nil {
+		return ManagedFilterView{}, err
+	}
+	if compiled.Name() != name {
+		return ManagedFilterView{}, fmt.Errorf("YAML filter name %q does not match %q", compiled.Name(), name)
+	}
+	next.ManagedYAMLFilters[index].YAML = source
+	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
+		return ManagedFilterView{}, err
+	}
+	return m.managedViewLocked(name), nil
+}
+
+func (m *Manager) DeleteManagedFilter(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := m.store.Snapshot()
+	index := managedFilterIndex(next, name)
+	if index < 0 {
+		return ErrNotFound
+	}
+	if assigned := assignedProxies(next, name); len(assigned) > 0 {
+		return fmt.Errorf("%w: filter %q is referenced by proxies %s", ErrConflict, name, strings.Join(assigned, ", "))
+	}
+	next.ManagedYAMLFilters = append(next.ManagedYAMLFilters[:index:index], next.ManagedYAMLFilters[index+1:]...)
+	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) Create(definition config.Proxy) (ProxyView, error) {
@@ -251,17 +344,22 @@ func (m *Manager) applyLocked(next config.Config) error {
 	if m.ctx == nil {
 		return errors.New("control manager is not started")
 	}
+	nextCatalog, err := m.catalogFor(next)
+	if err != nil {
+		return err
+	}
 	for _, definition := range next.Proxies {
-		if _, err := m.runnerFor(definition); err != nil {
+		if _, err := m.runnerFor(definition, nextCatalog, next.MaxConnections); err != nil {
 			return fmt.Errorf("build proxy %q: %w", definition.Name, err)
 		}
 	}
 
 	previous := m.store.Snapshot()
+	changedFilters := changedManagedFilters(previous, next)
 	stopped := make([]config.Proxy, 0)
 	for name, current := range m.running {
 		desired, exists := findProxy(next, name)
-		if !exists || !desired.Active || !reflect.DeepEqual(current.definition, desired) {
+		if !exists || !desired.Active || !reflect.DeepEqual(current.definition, desired) || referencesAny(current.definition, changedFilters) {
 			stopped = append(stopped, current.definition)
 			m.stopLocked(name)
 		}
@@ -276,11 +374,11 @@ func (m *Manager) applyLocked(next config.Config) error {
 		if _, exists := m.running[definition.Name]; exists {
 			continue
 		}
-		if err := m.startLocked(definition); err != nil {
+		if err := m.startLocked(definition, nextCatalog, next.MaxConnections); err != nil {
 			for _, name := range started {
 				m.stopLocked(name)
 			}
-			m.restoreLocked(stopped)
+			m.restoreLocked(stopped, m.catalog, previous.MaxConnections)
 			if errors.Is(err, ErrConflict) {
 				return err
 			}
@@ -292,24 +390,24 @@ func (m *Manager) applyLocked(next config.Config) error {
 		for _, name := range started {
 			m.stopLocked(name)
 		}
-		m.restoreLocked(stopped)
+		m.restoreLocked(stopped, m.catalog, previous.MaxConnections)
 		return fmt.Errorf("%w: %v", ErrPersistence, err)
 	}
-	_ = previous // retained for clarity: Store remains unchanged until commit.
+	m.catalog = nextCatalog
 	return nil
 }
 
-func (m *Manager) restoreLocked(definitions []config.Proxy) {
+func (m *Manager) restoreLocked(definitions []config.Proxy, catalog *filterCatalog, maxConnections int) {
 	for _, definition := range definitions {
-		if err := m.startLocked(definition); err != nil {
+		if err := m.startLocked(definition, catalog, maxConnections); err != nil {
 			m.states[definition.Name] = StateFailed
 			m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyRestoreFailed, Proxy: definition.Name, Message: "proxy restore failed after configuration update"})
 		}
 	}
 }
 
-func (m *Manager) startLocked(definition config.Proxy) error {
-	runner, err := m.runnerFor(definition)
+func (m *Manager) startLocked(definition config.Proxy, catalog *filterCatalog, maxConnections int) error {
+	runner, err := m.runnerFor(definition, catalog, maxConnections)
 	if err != nil {
 		return err
 	}
@@ -354,8 +452,8 @@ func (m *Manager) stopAllLocked() {
 	}
 }
 
-func (m *Manager) runnerFor(definition config.Proxy) (proxy.Runner, error) {
-	filters, err := m.registry.Build(definition.Filters)
+func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, maxConnections int) (proxy.Runner, error) {
+	filters, err := catalog.registry.Build(definition.Filters)
 	if err != nil {
 		return nil, fmt.Errorf("resolve filters: %w", err)
 	}
@@ -363,7 +461,6 @@ func (m *Manager) runnerFor(definition config.Proxy) (proxy.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	maxConnections := m.store.Snapshot().MaxConnections
 	if maxConnections == 0 {
 		maxConnections = defaultMaxConnections
 	}
@@ -412,6 +509,137 @@ func proxyIndex(cfg config.Config, name string) int {
 		}
 	}
 	return -1
+}
+
+func managedFilterIndex(cfg config.Config, name string) int {
+	for i, definition := range cfg.ManagedYAMLFilters {
+		if definition.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func assignedProxies(cfg config.Config, filterName string) []string {
+	assigned := make([]string, 0)
+	for _, definition := range cfg.Proxies {
+		for _, current := range definition.Filters {
+			if current == filterName {
+				assigned = append(assigned, definition.Name)
+				break
+			}
+		}
+	}
+	return assigned
+}
+
+func referencesAny(definition config.Proxy, names map[string]struct{}) bool {
+	for _, name := range definition.Filters {
+		if _, exists := names[name]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func changedManagedFilters(previous, next config.Config) map[string]struct{} {
+	previousByName := make(map[string]string, len(previous.ManagedYAMLFilters))
+	for _, current := range previous.ManagedYAMLFilters {
+		previousByName[current.Name] = current.YAML
+	}
+	nextByName := make(map[string]string, len(next.ManagedYAMLFilters))
+	for _, current := range next.ManagedYAMLFilters {
+		nextByName[current.Name] = current.YAML
+	}
+	changed := make(map[string]struct{})
+	for name, source := range previousByName {
+		if nextByName[name] != source {
+			changed[name] = struct{}{}
+		}
+	}
+	for name, source := range nextByName {
+		if previousByName[name] != source {
+			changed[name] = struct{}{}
+		}
+	}
+	return changed
+}
+
+func singleYAMLFilter(source string) (filter.Filter, error) {
+	if strings.TrimSpace(source) == "" {
+		return nil, errors.New("YAML is required")
+	}
+	compiled, err := filter.CompileYAML([]byte(source))
+	if err != nil {
+		return nil, err
+	}
+	if len(compiled) != 1 {
+		return nil, errors.New("YAML must contain exactly one filter")
+	}
+	return compiled[0], nil
+}
+
+func (m *Manager) managedViewLocked(name string) ManagedFilterView {
+	managed := m.catalog.managed[name]
+	return ManagedFilterView{FilterView: m.catalog.byName[name], YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}
+}
+
+func (m *Manager) catalogFor(cfg config.Config) (*filterCatalog, error) {
+	registry := filter.NewRegistry()
+	if err := filter.RegisterBuiltins(registry); err != nil {
+		return nil, err
+	}
+	catalog := &filterCatalog{registry: registry, byName: make(map[string]FilterView), managed: make(map[string]config.ManagedYAMLFilter)}
+	for _, name := range registry.Names() {
+		builtins, err := registry.Build([]string{name})
+		if err != nil {
+			return nil, fmt.Errorf("describe built-in filter %q: %w", name, err)
+		}
+		view := describeFilter(builtins[0], "builtin")
+		catalog.views = append(catalog.views, view)
+		catalog.byName[name] = view
+	}
+	register := func(current filter.Filter, source string, editable bool) error {
+		compiled := current
+		if err := registry.Register(compiled.Name(), func() (filter.Filter, error) { return compiled, nil }); err != nil {
+			return err
+		}
+		view := describeFilter(compiled, source)
+		view.Editable = editable
+		catalog.views = append(catalog.views, view)
+		catalog.byName[view.Name] = view
+		return nil
+	}
+	paths := make([]string, len(cfg.FilterFiles))
+	for i, path := range cfg.FilterFiles {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(m.configPath), path)
+		}
+		paths[i] = path
+	}
+	fileFilters, err := filter.LoadYAMLFiles(paths)
+	if err != nil {
+		return nil, fmt.Errorf("load global YAML filters: %w", err)
+	}
+	for _, current := range fileFilters {
+		if err := register(current, "yaml", false); err != nil {
+			return nil, fmt.Errorf("register YAML filter %q: %w", current.Name(), err)
+		}
+	}
+	for _, managed := range cfg.ManagedYAMLFilters {
+		current, err := singleYAMLFilter(managed.YAML)
+		if err != nil {
+			return nil, fmt.Errorf("compile managed YAML filter %q: %w", managed.Name, err)
+		}
+		if current.Name() != managed.Name {
+			return nil, fmt.Errorf("managed YAML filter name %q does not match compiled name %q", managed.Name, current.Name())
+		}
+		if err := register(current, "yaml", true); err != nil {
+			return nil, fmt.Errorf("register managed YAML filter %q: %w", current.Name(), err)
+		}
+		catalog.managed[managed.Name] = managed
+	}
+	return catalog, nil
 }
 
 func describeFilter(current filter.Filter, source string) FilterView {

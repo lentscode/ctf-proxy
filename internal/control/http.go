@@ -68,6 +68,10 @@ type proxyInput struct {
 	Filters  []string `json:"filters"`
 }
 
+type yamlFilterInput struct {
+	YAML string `json:"yaml"`
+}
+
 func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := a.checkAuthMiddleware(r); err != nil {
 		w.Header().Set("WWW-Authenticate", "Bearer")
@@ -93,6 +97,11 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"filters": a.manager.ListFilters()})
+		return
+	}
+	const filtersPrefix = "/api/v1/filters/"
+	if strings.HasPrefix(r.URL.Path, filtersPrefix) {
+		a.filter(w, r, strings.TrimPrefix(r.URL.Path, filtersPrefix))
 		return
 	}
 	if r.URL.Path == "/api/v1/events" {
@@ -217,6 +226,10 @@ func (a *api) proxies(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 	parts := strings.Split(tail, "/")
+	if len(parts) == 2 && parts[1] == "filters" {
+		a.proxyFilters(w, r, parts[0])
+		return
+	}
 	if len(parts) == 2 && (parts[1] == "activate" || parts[1] == "deactivate") {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w)
@@ -261,6 +274,68 @@ func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 		writeJSON(w, http.StatusOK, view)
 	case http.MethodDelete:
 		if err := a.manager.Delete(name); err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (a *api) proxyFilters(w http.ResponseWriter, r *http.Request, name string) {
+	switch r.Method {
+	case http.MethodGet:
+		filters, err := a.manager.ListProxyFilters(name)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"filters": filters})
+	case http.MethodPost:
+		var input yamlFilterInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		view, err := a.manager.CreateManagedFilter(name, input.YAML)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, view)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
+	if name == "" || strings.Contains(name, "/") {
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		view, err := a.manager.GetManagedFilter(name)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	case http.MethodPut:
+		var input yamlFilterInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		view, err := a.manager.ReplaceManagedFilter(name, input.YAML)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	case http.MethodDelete:
+		if err := a.manager.DeleteManagedFilter(name); err != nil {
 			writeManagerError(w, err)
 			return
 		}

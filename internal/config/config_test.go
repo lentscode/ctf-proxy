@@ -130,6 +130,36 @@ func TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration(t *testing.T) {
 	require.Equal(t, Config{Version: Version, Proxies: []Proxy{}}, loaded)
 }
 
+func TestManagedYAMLFiltersRoundTripAndValidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	source := "version: 1\nfilters:\n  - name: block-admin\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: /admin\n"
+	cfg := validConfig()
+	cfg.ManagedYAMLFilters = []ManagedYAMLFilter{{Name: "block-admin", YAML: source}}
+	require.NoError(t, Save(path, cfg))
+	loaded, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, source, loaded.ManagedYAMLFilters[0].YAML)
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "name mismatch", mutate: func(cfg *Config) { cfg.ManagedYAMLFilters[0].Name = "different" }, want: "does not match"},
+		{name: "zero rules", mutate: func(cfg *Config) { cfg.ManagedYAMLFilters[0].YAML = "version: 1\nfilters: []\n" }, want: "exactly one filter"},
+		{name: "duplicate names", mutate: func(cfg *Config) { cfg.ManagedYAMLFilters = append(cfg.ManagedYAMLFilters, cfg.ManagedYAMLFilters[0]) }, want: "duplicate"},
+		{name: "empty name", mutate: func(cfg *Config) { cfg.ManagedYAMLFilters[0].Name = "" }, want: "name is empty"},
+		{name: "empty YAML", mutate: func(cfg *Config) { cfg.ManagedYAMLFilters[0].YAML = " " }, want: "yaml is empty"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			invalid := cfg
+			invalid.ManagedYAMLFilters = append([]ManagedYAMLFilter(nil), cfg.ManagedYAMLFilters...)
+			testCase.mutate(&invalid)
+			require.ErrorContains(t, invalid.Validate(), testCase.want)
+		})
+	}
+}
+
 func validConfig() Config {
 	return Config{
 		Version:        Version,

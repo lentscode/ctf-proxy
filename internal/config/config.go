@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/lentscode/ctf-proxy/internal/filter"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -32,10 +33,19 @@ const MaxConnectionsLimit = 65_536
 // concurrent client connections for each proxy; zero selects the executable's
 // default.
 type Config struct {
-	Version        int      `yaml:"version"`
-	MaxConnections int      `yaml:"max_connections,omitempty"`
-	FilterFiles    []string `yaml:"filter_files,omitempty"`
-	Proxies        []Proxy  `yaml:"proxies"`
+	Version            int                 `yaml:"version"`
+	MaxConnections     int                 `yaml:"max_connections,omitempty"`
+	FilterFiles        []string            `yaml:"filter_files,omitempty"`
+	ManagedYAMLFilters []ManagedYAMLFilter `yaml:"managed_yaml_filters,omitempty"`
+	Proxies            []Proxy             `yaml:"proxies"`
+}
+
+// ManagedYAMLFilter is an API-managed, single-rule YAML filter document.
+// Name duplicates the rule name in YAML so it remains a stable configuration
+// identifier even when the source is inspected without compiling it.
+type ManagedYAMLFilter struct {
+	Name string `yaml:"name"`
+	YAML string `yaml:"yaml"`
 }
 
 // Proxy describes one public listener and its private upstream service.
@@ -226,6 +236,29 @@ func (c Config) Validate() error {
 			return fmt.Errorf("filter_files at index %d is empty", index)
 		}
 	}
+	managedNames := make(map[string]struct{}, len(c.ManagedYAMLFilters))
+	for index, managed := range c.ManagedYAMLFilters {
+		if strings.TrimSpace(managed.Name) == "" {
+			return fmt.Errorf("managed_yaml_filters at index %d: name is empty", index)
+		}
+		if strings.TrimSpace(managed.YAML) == "" {
+			return fmt.Errorf("managed_yaml_filters at index %d: yaml is empty", index)
+		}
+		if _, exists := managedNames[managed.Name]; exists {
+			return fmt.Errorf("duplicate managed YAML filter name %q", managed.Name)
+		}
+		compiled, err := filter.CompileYAML([]byte(managed.YAML))
+		if err != nil {
+			return fmt.Errorf("managed_yaml_filters at index %d: %w", index, err)
+		}
+		if len(compiled) != 1 {
+			return fmt.Errorf("managed_yaml_filters at index %d: YAML must contain exactly one filter", index)
+		}
+		if compiled[0].Name() != managed.Name {
+			return fmt.Errorf("managed_yaml_filters at index %d: YAML filter name %q does not match %q", index, compiled[0].Name(), managed.Name)
+		}
+		managedNames[managed.Name] = struct{}{}
+	}
 
 	names := make(map[string]struct{}, len(c.Proxies))
 	listeners := make(map[string]struct{}, len(c.Proxies))
@@ -248,6 +281,7 @@ func (c Config) Validate() error {
 func clone(cfg Config) Config {
 	copy := cfg
 	copy.FilterFiles = append([]string(nil), cfg.FilterFiles...)
+	copy.ManagedYAMLFilters = append([]ManagedYAMLFilter(nil), cfg.ManagedYAMLFilters...)
 	copy.Proxies = make([]Proxy, len(cfg.Proxies))
 	for index, proxy := range cfg.Proxies {
 		copy.Proxies[index] = proxy
