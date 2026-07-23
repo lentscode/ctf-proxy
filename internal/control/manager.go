@@ -171,7 +171,9 @@ func (m *Manager) Get(name string) (ProxyView, error) {
 func (m *Manager) ListFilters() []FilterView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]FilterView(nil), m.catalog.views...)
+	views := make([]FilterView, len(m.catalog.views))
+	copy(views, m.catalog.views)
+	return views
 }
 
 func (m *Manager) GetManagedFilter(name string) (ManagedFilterView, error) {

@@ -340,6 +340,122 @@ func TestAPIEventsSnapshotRequiresAuthAndDoesNotConsume(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
 
+func TestAPIProxyRoutesSupportRetrievalReplacementAndActivation(t *testing.T) {
+	store, handler := newControlAPITestServer(t)
+	listen := unusedTCPAddress(t)
+
+	created := serveAPI(handler, http.MethodPost, "/api/v1/proxies", `{"name":"web","active":false,"protocol":"tcp","listen":"`+listen+`","upstream":"127.0.0.1:31338"}`)
+	require.Equal(t, http.StatusCreated, created.Code)
+
+	response := serveAPI(handler, http.MethodGet, "/api/v1/proxies/web", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var view ProxyView
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
+	require.Equal(t, StateInactive, view.State)
+	require.Equal(t, "web", view.Name)
+
+	response = serveAPI(handler, http.MethodPut, "/api/v1/proxies/web", `{"protocol":"tcp","listen":"`+listen+`","upstream":"127.0.0.1:31339"}`)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Contains(t, response.Body.String(), "active is required")
+
+	// The URL name is authoritative: a replacement must not be able to rename
+	// a configured proxy through its request body.
+	response = serveAPI(handler, http.MethodPut, "/api/v1/proxies/web", `{"name":"attempted-rename","active":false,"protocol":"tcp","listen":"`+listen+`","upstream":"127.0.0.1:31339","filters":[]}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
+	require.Equal(t, "web", view.Name)
+	require.Equal(t, "127.0.0.1:31339", view.Upstream)
+
+	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/activate", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
+	require.True(t, view.Active)
+	require.Equal(t, StateRunning, view.State)
+
+	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/deactivate", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
+	require.False(t, view.Active)
+	require.Equal(t, StateInactive, view.State)
+	require.False(t, store.Snapshot().Proxies[0].Active)
+}
+
+func TestAPIRouteAndMethodValidation(t *testing.T) {
+	_, handler := newControlAPITestServer(t)
+
+	for _, testCase := range []struct {
+		name   string
+		method string
+		path   string
+		want   int
+	}{
+		{name: "health only allows GET", method: http.MethodPost, path: "/healthz", want: http.StatusMethodNotAllowed},
+		{name: "proxies only allow GET or POST", method: http.MethodPut, path: "/api/v1/proxies", want: http.StatusMethodNotAllowed},
+		{name: "proxy filters only allow GET or POST", method: http.MethodDelete, path: "/api/v1/proxies/web/filters", want: http.StatusMethodNotAllowed},
+		{name: "filters only allow GET", method: http.MethodPost, path: "/api/v1/filters", want: http.StatusMethodNotAllowed},
+		{name: "events only allow GET", method: http.MethodPost, path: "/api/v1/events", want: http.StatusMethodNotAllowed},
+		{name: "stream only allows GET", method: http.MethodPost, path: "/api/v1/events/stream", want: http.StatusMethodNotAllowed},
+		{name: "unknown route", method: http.MethodGet, path: "/api/v1/unknown", want: http.StatusNotFound},
+		{name: "malformed proxy route", method: http.MethodGet, path: "/api/v1/proxies/web/extra", want: http.StatusNotFound},
+		{name: "malformed filter route", method: http.MethodGet, path: "/api/v1/filters/a/b", want: http.StatusNotFound},
+		{name: "missing proxy", method: http.MethodGet, path: "/api/v1/proxies/missing", want: http.StatusNotFound},
+		{name: "cannot activate missing proxy", method: http.MethodPost, path: "/api/v1/proxies/missing/activate", want: http.StatusNotFound},
+		{name: "filters for missing proxy", method: http.MethodGet, path: "/api/v1/proxies/missing/filters", want: http.StatusNotFound},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := serveAPI(handler, testCase.method, testCase.path, "")
+			require.Equal(t, testCase.want, response.Code)
+			if testCase.want == http.StatusMethodNotAllowed {
+				require.Contains(t, response.Body.String(), `"method_not_allowed"`)
+			}
+		})
+	}
+
+	response := serveAPI(handler, http.MethodGet, "/api/v1/filters", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.JSONEq(t, `{"filters":[]}`, response.Body.String())
+}
+
+func TestAPIEventsValidatesLimitAndWorksWithoutEventHub(t *testing.T) {
+	_, handler := newControlAPITestServer(t)
+
+	for _, rawLimit := range []string{"0", "-1", "not-a-number", "513"} {
+		t.Run(rawLimit, func(t *testing.T) {
+			response := serveAPI(handler, http.MethodGet, "/api/v1/events?limit="+rawLimit, "")
+			require.Equal(t, http.StatusBadRequest, response.Code)
+			require.Contains(t, response.Body.String(), "limit must be between 1 and 512")
+		})
+	}
+
+	response := serveAPI(handler, http.MethodGet, "/api/v1/events?limit=512", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.JSONEq(t, `{"events":[]}`, response.Body.String())
+
+	response = serveAPI(handler, http.MethodGet, "/api/v1/events/stream", "")
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+}
+
+func newControlAPITestServer(t *testing.T) (*config.Store, http.Handler) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	return store, NewHandler(manager, []string{"test-token"})
+}
+
+func unusedTCPAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	return address
+}
+
 func TestAPIEventStreamDeliversNewEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
