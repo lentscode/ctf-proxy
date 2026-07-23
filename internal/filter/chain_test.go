@@ -83,11 +83,18 @@ func TestChainNeedsHTTPBodyOnlyForEligibleDirection(t *testing.T) {
 }
 
 func TestNewChainRejectsInvalidFilters(t *testing.T) {
-	_, err := NewChain(testFilter{name: "invalid", requirements: Requirements{Protocols: []Protocol{ProtocolUnknown}}})
-	require.Error(t, err)
-
-	_, err = NewChain(testFilter{name: "same"}, testFilter{name: "same"})
-	require.Error(t, err)
+	for _, testCase := range []struct {
+		name    string
+		filters []Filter
+	}{
+		{name: "unknown protocol", filters: []Filter{testFilter{name: "invalid", requirements: Requirements{Protocols: []Protocol{ProtocolUnknown}}}}},
+		{name: "duplicate names", filters: []Filter{testFilter{name: "same"}, testFilter{name: "same"}}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := NewChain(testCase.filters...)
+			require.Error(t, err)
+		})
+	}
 }
 
 type testFilter struct {

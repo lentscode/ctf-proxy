@@ -56,16 +56,29 @@ func TestSaveReplacesConfigurationAndPreservesExistingPermissions(t *testing.T) 
 	require.Equal(t, os.FileMode(0o640), info.Mode().Perm())
 }
 
-func TestValidateRejectsConflictingListenersAndInvalidUpstreams(t *testing.T) {
-	cfg := validConfig()
-	cfg.Proxies = append(cfg.Proxies, Proxy{
-		Name: "duplicate-listener", Protocol: "tcp", Listen: ":8080", Upstream: "127.0.0.1:18081",
-	})
-	require.ErrorContains(t, cfg.Validate(), "multiple proxies listen")
+func TestValidateRejectsInvalidConfigurations(t *testing.T) {
+	testCases := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{name: "conflicting listeners", mutate: func(cfg *Config) {
+			cfg.Proxies = append(cfg.Proxies, Proxy{Name: "duplicate-listener", Protocol: "tcp", Listen: ":8080", Upstream: "127.0.0.1:18081"})
+		}, wantErr: "multiple proxies listen"},
+		{name: "HTTP proxy with TCP upstream", mutate: func(cfg *Config) { cfg.Proxies[0].Upstream = "127.0.0.1:18080" }, wantErr: "absolute http or https URL"},
+		{name: "unsupported protocol", mutate: func(cfg *Config) { cfg.Proxies[0].Protocol = "udp" }, wantErr: "protocol"},
+		{name: "duplicate proxy name", mutate: func(cfg *Config) {
+			cfg.Proxies = append(cfg.Proxies, Proxy{Name: "web", Protocol: "tcp", Listen: ":8081", Upstream: "127.0.0.1:18081"})
+		}, wantErr: "duplicate proxy name"},
+	}
 
-	cfg = validConfig()
-	cfg.Proxies[0].Upstream = "127.0.0.1:18080"
-	require.ErrorContains(t, cfg.Validate(), "absolute http or https URL")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := validConfig()
+			testCase.mutate(&cfg)
+			require.ErrorContains(t, cfg.Validate(), testCase.wantErr)
+		})
+	}
 }
 
 func TestLoadRejectsMoreThanOneDocument(t *testing.T) {

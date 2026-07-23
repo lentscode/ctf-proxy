@@ -28,12 +28,22 @@ func TestRegistryBuildsFreshFiltersInRequestedOrder(t *testing.T) {
 }
 
 func TestRegistryRejectsInvalidRegistrationAndBuild(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		run  func(*Registry) error
+	}{
+		{name: "empty registration name", run: func(registry *Registry) error {
+			return registry.Register("", func() (Filter, error) { return testFilter{}, nil })
+		}},
+		{name: "nil factory", run: func(registry *Registry) error { return registry.Register("filter", nil) }},
+		{name: "missing requested filter", run: func(registry *Registry) error { _, err := registry.Build([]string{"missing"}); return err }},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Error(t, testCase.run(NewRegistry()))
+		})
+	}
+
 	registry := NewRegistry()
-	require.Error(t, registry.Register("", func() (Filter, error) { return testFilter{}, nil }))
-	require.Error(t, registry.Register("filter", nil))
 	require.NoError(t, registry.Register("filter", func() (Filter, error) { return testFilter{name: "filter"}, nil }))
 	require.Error(t, registry.Register("filter", func() (Filter, error) { return testFilter{name: "filter"}, nil }))
-
-	_, err := registry.Build([]string{"missing"})
-	assert.Error(t, err)
 }

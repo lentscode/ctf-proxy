@@ -88,18 +88,21 @@ filters:
 }
 
 func TestCompileYAMLRejectsInvalidRules(t *testing.T) {
-	testCases := []string{
-		"version: 2\nfilters: []\n",
-		"version: 1\nfilters:\n  - name: no-action\n    protocol: tcp\n    direction: request\n    match: {all: [{field: tcp.body, operator: exact, value: x}]}\n",
-		"version: 1\nfilters:\n  - name: invalid-field\n    protocol: tcp\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n",
-		"version: 1\nfilters:\n  - name: response-path\n    protocol: http\n    direction: response\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n",
-		"version: 1\nfilters:\n  - name: invalid-regex\n    protocol: http\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: regex, value: '['}]}\n",
-		"version: 1\nunknown: true\nfilters: []\n",
-	}
-
-	for _, input := range testCases {
-		_, err := CompileYAML([]byte(input))
-		assert.Error(t, err, input)
+	for _, testCase := range []struct {
+		name  string
+		input string
+	}{
+		{name: "unsupported version", input: "version: 2\nfilters: []\n"},
+		{name: "missing action", input: "version: 1\nfilters:\n  - name: no-action\n    protocol: tcp\n    direction: request\n    match: {all: [{field: tcp.body, operator: exact, value: x}]}\n"},
+		{name: "protocol-incompatible field", input: "version: 1\nfilters:\n  - name: invalid-field\n    protocol: tcp\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
+		{name: "response path", input: "version: 1\nfilters:\n  - name: response-path\n    protocol: http\n    direction: response\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
+		{name: "invalid regular expression", input: "version: 1\nfilters:\n  - name: invalid-regex\n    protocol: http\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: regex, value: '['}]}\n"},
+		{name: "unknown top-level field", input: "version: 1\nunknown: true\nfilters: []\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := CompileYAML([]byte(testCase.input))
+			assert.Error(t, err)
+		})
 	}
 }
 

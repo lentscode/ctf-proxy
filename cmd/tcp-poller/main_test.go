@@ -39,20 +39,34 @@ func TestRunExchangesConfiguredPayload(t *testing.T) {
 }
 
 func TestExchangeRejectsMismatchedResponse(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		payload := make([]byte, len("hello"))
-		_, _ = io.ReadFull(conn, payload)
-		_, _ = conn.Write([]byte("wrong"))
-	}()
+	testCases := []struct {
+		name     string
+		payload  string
+		response string
+		wantErr  string
+	}{
+		{name: "different response", payload: "hello", response: "wrong", wantErr: "did not match"},
+		{name: "empty response", payload: "hello", response: "", wantErr: "EOF"},
+	}
 
-	err = exchange(context.Background(), listener.Addr().String(), []byte("hello"), time.Second)
-	require.ErrorContains(t, err, "did not match")
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = listener.Close() })
+			go func() {
+				conn, acceptErr := listener.Accept()
+				if acceptErr != nil {
+					return
+				}
+				defer conn.Close()
+				payload := make([]byte, len(testCase.payload))
+				_, _ = io.ReadFull(conn, payload)
+				_, _ = conn.Write([]byte(testCase.response))
+			}()
+
+			err = exchange(context.Background(), listener.Addr().String(), []byte(testCase.payload), time.Second)
+			require.ErrorContains(t, err, testCase.wantErr)
+		})
+	}
 }
