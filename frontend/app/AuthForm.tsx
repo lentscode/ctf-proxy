@@ -15,7 +15,7 @@ export function AuthForm({ token, error, isConnecting, onTokenChange, onSubmit }
   }
 
   return (
-    <form className="auth-form" onSubmit={submit}>
+    <form className="flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-zinc-700 bg-zinc-900 p-7 shadow-2xl shadow-black/25 sm:p-10" onSubmit={submit}>
       <input
         aria-label="Control token"
         aria-describedby={error ? 'token-error' : undefined}
@@ -27,9 +27,10 @@ export function AuthForm({ token, error, isConnecting, onTokenChange, onSubmit }
         autoComplete="off"
         disabled={isConnecting}
         required
+        className="h-12 w-full rounded-lg border border-zinc-600 bg-zinc-950 px-3 font-mono text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 aria-invalid:border-zinc-200 disabled:cursor-wait disabled:opacity-65"
       />
-      {error && <p id="token-error" className="auth-error" role="alert">{error}</p>}
-      <button type="submit" disabled={isConnecting}>
+      {error && <p id="token-error" className="-mt-0.5 text-sm text-zinc-200" role="alert">{error}</p>}
+      <button type="submit" disabled={isConnecting} className="h-12 cursor-pointer rounded-lg border border-zinc-200 bg-zinc-200 font-bold text-zinc-950 transition hover:bg-white disabled:cursor-wait disabled:opacity-75">
         {isConnecting ? 'Connecting…' : 'Continue'}
       </button>
     </form>

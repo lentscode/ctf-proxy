@@ -3,7 +3,6 @@ import { AuthForm } from './AuthForm'
 import { AppShell } from './AppShell'
 import { isUnauthorized, verifyHealth } from '../lib/api'
 import { clearAuthToken, getAuthToken, saveAuthToken } from '../lib/auth'
-import './App.css'
 
 function App() {
   const [token, setToken] = useState(() => getAuthToken())
@@ -56,7 +55,7 @@ function App() {
 
   if (!authenticated) {
     return (
-      <main className="auth-page">
+      <main className="grid min-h-svh place-items-center bg-zinc-950 p-4 font-sans text-zinc-200">
         <AuthForm
           token={token}
           error={authError}
