@@ -3,6 +3,8 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 
+const controlTarget = process.env.VITE_CONTROL_ORIGIN ?? 'http://127.0.0.1:8081'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -12,8 +14,8 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:8081',
-      '/healthz': 'http://127.0.0.1:8081',
+      '/api': controlTarget,
+      '/healthz': controlTarget,
     },
   },
 })
