@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AuthForm } from './AuthForm'
-import { Dashboard } from './Dashboard'
+import { AppShell } from './AppShell'
 import { isUnauthorized, verifyHealth } from '../lib/api'
 import { clearAuthToken, getAuthToken, saveAuthToken } from '../lib/auth'
 import './App.css'
@@ -68,7 +68,7 @@ function App() {
     )
   }
 
-  return <Dashboard onUnauthorized={disconnect} />
+  return <AppShell onUnauthorized={disconnect} />
 }
 
 export default App
