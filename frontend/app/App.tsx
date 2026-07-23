@@ -1,29 +1,74 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
-import { getAuthToken, saveAuthToken } from '../lib/auth'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AuthForm } from './AuthForm'
+import { Dashboard } from './Dashboard'
+import { isUnauthorized, verifyHealth } from '../lib/api'
+import { clearAuthToken, getAuthToken, saveAuthToken } from '../lib/auth'
 import './App.css'
 
 function App() {
   const [token, setToken] = useState(() => getAuthToken())
+  const [authenticated, setAuthenticated] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [authError, setAuthError] = useState<string | undefined>()
+  const initialToken = useRef(getAuthToken())
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    saveAuthToken(token.trim())
+  const disconnect = useCallback(() => {
+    clearAuthToken()
+    setToken('')
+    setAuthenticated(false)
+    setIsConnecting(false)
+    setAuthError('Token was not accepted.')
+  }, [])
+
+  const connect = useCallback(async (candidate: string) => {
+    const nextToken = candidate.trim()
+    if (!nextToken) {
+      return
+    }
+
+    saveAuthToken(nextToken)
+    setToken(nextToken)
+    setAuthError(undefined)
+    setIsConnecting(true)
+
+    try {
+      await verifyHealth()
+      setAuthenticated(true)
+    } catch (error) {
+      if (isUnauthorized(error)) {
+        clearAuthToken()
+        setToken('')
+        setAuthError('Token was not accepted.')
+      } else {
+        setAuthError('Unable to reach ctf-proxy.')
+      }
+      setAuthenticated(false)
+    } finally {
+      setIsConnecting(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (initialToken.current) {
+      void connect(initialToken.current)
+    }
+  }, [connect])
+
+  if (!authenticated) {
+    return (
+      <main className="auth-page">
+        <AuthForm
+          token={token}
+          error={authError}
+          isConnecting={isConnecting}
+          onTokenChange={setToken}
+          onSubmit={connect}
+        />
+      </main>
+    )
   }
 
-  return (
-    <form className="auth-form" onSubmit={submit}>
-      <input
-        aria-label="Control token"
-        type="password"
-        value={token}
-        onChange={(event) => setToken(event.target.value)}
-        placeholder="Control token"
-        autoComplete="off"
-      />
-      <button type="submit">Continue</button>
-    </form>
-  )
+  return <Dashboard onUnauthorized={disconnect} />
 }
 
 export default App
