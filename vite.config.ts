@@ -12,6 +12,10 @@ export default defineConfig({
     babel({ presets: [reactCompilerPreset()] }),
     tailwindcss(),
   ],
+  build: {
+    outDir: 'cmd/ctf-proxy/dashboard/dist',
+    emptyOutDir: true,
+  },
   server: {
     proxy: {
       '/api': controlTarget,

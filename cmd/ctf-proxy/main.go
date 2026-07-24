@@ -84,7 +84,11 @@ func run(ctx context.Context, configPath string) error {
 		}
 		fmt.Fprintf(os.Stderr, "ctf-proxy: generated initial control token: %s\n", token)
 	}
-	server := &http.Server{Handler: control.NewHandler(manager, tokens, observation.Hub())}
+	handler, err := newServerHandler(control.NewHandler(manager, tokens, observation.Hub()))
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Handler: handler}
 	logger.Info("control API listening", "address", controlAddr)
 	go func() { <-ctx.Done(); _ = server.Close() }()
 	err = server.Serve(listener)

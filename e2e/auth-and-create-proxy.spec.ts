@@ -1,5 +1,16 @@
 import { expect, test } from '@playwright/test'
 
+test('embedded dashboard serves assets and client-side routes', async ({ page }) => {
+  const response = await page.goto('/proxies')
+  expect(response?.status()).toBe(200)
+  await expect(page.getByLabel('Control token')).toBeVisible()
+
+  const scriptPath = await page.locator('script[type="module"]').getAttribute('src')
+  expect(scriptPath).toBeTruthy()
+  const asset = await page.request.get(scriptPath!)
+  expect(asset.ok()).toBeTruthy()
+})
+
 test('operator is kept signed out when the control token is invalid', async ({ page }) => {
   await page.goto('/')
 

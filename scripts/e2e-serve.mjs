@@ -5,7 +5,6 @@ import { join } from 'node:path'
 
 const controlAddress = '127.0.0.1:18081'
 const controlURL = `http://${controlAddress}`
-const dashboardPort = 4173
 const token = 'e2e-token'
 const temporaryDirectory = await mkdtemp(join(tmpdir(), 'ctf-proxy-e2e-'))
 const configPath = join(temporaryDirectory, 'ctf-proxy.yaml')
@@ -13,7 +12,6 @@ const tokensPath = join(temporaryDirectory, '.tokens')
 const binaryPath = join(temporaryDirectory, 'ctf-proxy')
 
 let controlProcess
-let viteProcess
 
 // command starts a child process with inherited terminal output.
 function command(name, args, options = {}) {
@@ -58,9 +56,9 @@ async function waitForControl() {
   throw new Error('timed out waiting for the ctf-proxy control API')
 }
 
-// cleanup stops both development servers and removes their temporary state.
+// cleanup stops the embedded-dashboard binary and removes its temporary state.
 async function cleanup() {
-  await Promise.all([stop(viteProcess), stop(controlProcess)])
+  await stop(controlProcess)
   await rm(temporaryDirectory, { recursive: true, force: true })
 }
 
@@ -68,7 +66,10 @@ try {
   await writeFile(configPath, 'version: 1\nproxies: []\n', { mode: 0o600 })
   await writeFile(tokensPath, `${token}\n`, { mode: 0o600 })
 
-  const build = command('go', ['build', '-o', binaryPath, './cmd/ctf-proxy'])
+  const frontendBuild = command(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['run', 'build:frontend'])
+  if (await waitForExit(frontendBuild) !== 0) throw new Error('could not build dashboard for E2E tests')
+
+  const build = command('go', ['build', '-tags', 'production', '-o', binaryPath, './cmd/ctf-proxy'])
   if (await waitForExit(build) !== 0) throw new Error('could not build ctf-proxy for E2E tests')
 
   controlProcess = command(binaryPath, [], {
@@ -81,19 +82,12 @@ try {
   })
   await waitForControl()
 
-  viteProcess = command(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', [
-    'exec', 'vite', '--host', '127.0.0.1', '--port', String(dashboardPort), '--strictPort',
-  ], {
-    env: { ...process.env, VITE_CONTROL_ORIGIN: controlURL },
-  })
-
   const signal = await new Promise((resolve) => {
     process.once('SIGINT', () => resolve('SIGINT'))
     process.once('SIGTERM', () => resolve('SIGTERM'))
-    viteProcess.once('exit', () => resolve('vite exited'))
     controlProcess.once('exit', () => resolve('ctf-proxy exited'))
   })
-  if (signal === 'vite exited' || signal === 'ctf-proxy exited') {
+  if (signal === 'ctf-proxy exited') {
     throw new Error(`E2E service stopped unexpectedly: ${signal}`)
   }
 } finally {
