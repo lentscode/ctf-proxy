@@ -18,11 +18,13 @@ const emptyProxy: ProxyDefinition = {
 export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedName, setSelectedName] = useState<string | undefined>()
+  const [isCreating, setIsCreating] = useState(false)
   const focusedOnce = useRef<string | undefined>(undefined)
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: getProxies })
   const requestedProxy = searchParams.get('proxy') ?? undefined
   const selectedProxyName = requestedProxy && proxies.data?.some((proxy) => proxy.name === requestedProxy) ? requestedProxy : selectedName
   const selected = proxies.data?.find((proxy) => proxy.name === selectedProxyName)
+  const showEditor = selected !== undefined || isCreating || proxies.data?.length === 0
 
   // refresh invalidates the shared list so all proxy views converge after a mutation.
   const refresh = async () => {
@@ -30,7 +32,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   }
   const create = useMutation({ mutationFn: createProxy, onSuccess: refresh })
   const replace = useMutation({ mutationFn: ({ name, definition }: { name: string, definition: ProxyDefinition }) => replaceProxy(name, definition), onSuccess: refresh })
-  const remove = useMutation({ mutationFn: deleteProxy, onSuccess: async () => { setSelectedName(undefined); setSearchParams({}); await refresh() } })
+  const remove = useMutation({ mutationFn: deleteProxy, onSuccess: async () => { setSelectedName(undefined); setIsCreating(false); setSearchParams({}); await refresh() } })
 
   useEffect(() => {
     if (isUnauthorized(proxies.error) || isUnauthorized(create.error) || isUnauthorized(replace.error) || isUnauthorized(remove.error)) {
@@ -49,6 +51,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
 
   function selectProxy(name: string | undefined) {
     setSelectedName(name)
+    setIsCreating(name === undefined)
     if (requestedProxy) setSearchParams({})
   }
 
@@ -60,6 +63,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
     } else {
       const created = await create.mutateAsync(definition)
       setSelectedName(created.name)
+      setIsCreating(false)
     }
   }
 
@@ -87,7 +91,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
             {proxies.data?.map((proxy) => <ProxyDirectoryItem key={proxy.name} proxy={proxy} selected={selectedProxyName === proxy.name} onSelect={() => selectProxy(proxy.name)} />)}
           </div>
         </section>
-        <section className="p-6" aria-labelledby="proxy-editor-heading">
+        {showEditor && <section className="p-6" aria-labelledby="proxy-editor-heading">
           <h2 id="proxy-editor-heading" tabIndex={-1} className="m-0 mb-5 text-base font-semibold text-zinc-100 outline-none">{selected ? `Edit ${selected.name}` : 'Add proxy'}</h2>
           {mutationError && !isUnauthorized(mutationError) && <p className="m-0 mb-5 text-sm text-zinc-200">Unable to save this proxy. Check the values and try again.</p>}
           <ProxyEditor
@@ -99,7 +103,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
             onDelete={selected ? confirmDelete : undefined}
             isDeleting={remove.isPending}
           />
-        </section>
+        </section>}
       </div>
     </main>
   )
