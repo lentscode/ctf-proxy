@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { getProxies, isUnauthorized, type ProxyView } from '../lib/api'
 
 // ProxyTableProps contains the callback used when the list query is unauthorized.
@@ -66,7 +67,7 @@ export function ProxyTable({ onUnauthorized }: ProxyTableProps) {
 function ProxyRow({ proxy }: { proxy: ProxyView }) {
   return (
     <tr className="border-b border-zinc-700 text-sm hover:bg-zinc-900">
-      <th scope="row" className="h-14 px-3 font-medium">{proxy.name}</th>
+      <th scope="row" className="h-14 px-3 font-medium"><Link className="text-zinc-100 no-underline underline-offset-3 hover:underline" to={`/proxies?proxy=${encodeURIComponent(proxy.name)}`}>{proxy.name}</Link></th>
       <td className="h-14 px-3"><span className="inline-flex rounded-full bg-zinc-800 px-2 py-1 text-[11px] leading-none font-semibold text-zinc-200">{stateLabels[proxy.state]}</span></td>
       <td className="h-14 px-3 font-mono text-xs max-sm:hidden">{proxy.protocol}</td>
       <td className="h-14 px-3 font-mono text-xs">{proxy.listen}</td>

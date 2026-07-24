@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { createProxy, deleteProxy, getProxies, isUnauthorized, proxyDefinitionSchema, replaceProxy, type ProxyDefinition, type ProxyView } from '../lib/api'
 import { queryClient } from '../lib/query-client'
 
@@ -16,9 +16,13 @@ const emptyProxy: ProxyDefinition = {
 
 // ProxiesPage manages proxy selection, editing, creation, and deletion.
 export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [selectedName, setSelectedName] = useState<string | undefined>()
+  const focusedOnce = useRef<string | undefined>(undefined)
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: getProxies })
-  const selected = proxies.data?.find((proxy) => proxy.name === selectedName)
+  const requestedProxy = searchParams.get('proxy') ?? undefined
+  const selectedProxyName = requestedProxy && proxies.data?.some((proxy) => proxy.name === requestedProxy) ? requestedProxy : selectedName
+  const selected = proxies.data?.find((proxy) => proxy.name === selectedProxyName)
 
   // refresh invalidates the shared list so all proxy views converge after a mutation.
   const refresh = async () => {
@@ -26,13 +30,27 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   }
   const create = useMutation({ mutationFn: createProxy, onSuccess: refresh })
   const replace = useMutation({ mutationFn: ({ name, definition }: { name: string, definition: ProxyDefinition }) => replaceProxy(name, definition), onSuccess: refresh })
-  const remove = useMutation({ mutationFn: deleteProxy, onSuccess: async () => { setSelectedName(undefined); await refresh() } })
+  const remove = useMutation({ mutationFn: deleteProxy, onSuccess: async () => { setSelectedName(undefined); setSearchParams({}); await refresh() } })
 
   useEffect(() => {
     if (isUnauthorized(proxies.error) || isUnauthorized(create.error) || isUnauthorized(replace.error) || isUnauthorized(remove.error)) {
       onUnauthorized()
     }
   }, [create.error, onUnauthorized, proxies.error, remove.error, replace.error])
+
+  useEffect(() => {
+    if (!requestedProxy || selected?.name !== requestedProxy || focusedOnce.current === requestedProxy) return
+    const heading = document.getElementById('proxy-editor-heading')
+    if (!heading) return
+    focusedOnce.current = requestedProxy
+    heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    heading.focus({ preventScroll: true })
+  }, [requestedProxy, selected?.name])
+
+  function selectProxy(name: string | undefined) {
+    setSelectedName(name)
+    if (requestedProxy) setSearchParams({})
+  }
 
   // save chooses create or replacement based on the current selection.
   async function save(definition: ProxyDefinition) {
@@ -57,7 +75,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
     <main className="mx-auto w-full max-w-[1440px] px-8 pt-14 pb-8 max-lg:px-6 max-lg:pt-10 max-lg:pb-6 max-sm:px-4 max-sm:pt-8 max-sm:pb-4">
       <header className="flex min-h-26 items-end justify-between gap-4 border-b border-zinc-700 pb-6 max-sm:min-h-0 max-sm:items-start">
         <div><p className="m-0 font-mono text-[11px] leading-none tracking-[0.08em] text-zinc-400 uppercase">Configuration</p><h1 className="mt-1.5 mb-0 text-3xl font-semibold tracking-tight text-zinc-100">Proxies</h1></div>
-        <button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => setSelectedName(undefined)}>Add proxy</button>
+        <button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => selectProxy(undefined)}>Add proxy</button>
       </header>
       <div className="grid min-h-140 grid-cols-[minmax(250px,0.8fr)_minmax(0,1.2fr)] max-lg:min-h-0 max-lg:grid-cols-1">
         <section className="border-r border-zinc-700 p-6 max-lg:border-r-0 max-lg:border-b" aria-labelledby="configured-proxies">
@@ -66,11 +84,11 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
           {proxies.isError && !isUnauthorized(proxies.error) && <p className="m-0 text-sm text-zinc-400">Unable to load proxies.</p>}
           {proxies.data?.length === 0 && <p className="m-0 text-sm text-zinc-400">No proxies configured.</p>}
           <div className="-mx-6 grid">
-            {proxies.data?.map((proxy) => <ProxyDirectoryItem key={proxy.name} proxy={proxy} selected={selectedName === proxy.name} onSelect={() => setSelectedName(proxy.name)} />)}
+            {proxies.data?.map((proxy) => <ProxyDirectoryItem key={proxy.name} proxy={proxy} selected={selectedProxyName === proxy.name} onSelect={() => selectProxy(proxy.name)} />)}
           </div>
         </section>
         <section className="p-6" aria-labelledby="proxy-editor-heading">
-          <h2 id="proxy-editor-heading" className="m-0 mb-5 text-base font-semibold text-zinc-100">{selected ? `Edit ${selected.name}` : 'Add proxy'}</h2>
+          <h2 id="proxy-editor-heading" tabIndex={-1} className="m-0 mb-5 text-base font-semibold text-zinc-100 outline-none">{selected ? `Edit ${selected.name}` : 'Add proxy'}</h2>
           {mutationError && !isUnauthorized(mutationError) && <p className="m-0 mb-5 text-sm text-zinc-200">Unable to save this proxy. Check the values and try again.</p>}
           <ProxyEditor
             key={selected?.name ?? 'new'}

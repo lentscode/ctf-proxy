@@ -17,6 +17,10 @@ test('operator can authenticate and create an inactive TCP proxy', async ({ page
   await page.getByRole('button', { name: 'Save proxy' }).click()
 
   await expect(page.getByRole('button', { name: 'notes-tcp' })).toBeVisible()
+  await page.getByRole('link', { name: 'Dashboard' }).click()
+  await page.getByRole('link', { name: 'notes-tcp' }).click()
+  await expect(page).toHaveURL(/\/proxies\?proxy=notes-tcp/)
+  await expect(page.getByRole('heading', { name: 'Edit notes-tcp' })).toBeFocused()
 })
 
 test('operator can manage a structured filter from its proxy', async ({ page }) => {
