@@ -27,8 +27,9 @@ proxies:
 	require.ErrorContains(t, err, "unexpected")
 }
 
-// TestLoadDefaultsProxyActiveToTrue verifies omitted active fields start enabled.
-func TestLoadDefaultsProxyActiveToTrue(t *testing.T) {
+// TestLoadDefaultsProxyActiveToFalse verifies proxies require an explicit
+// active: true declaration before they start.
+func TestLoadDefaultsProxyActiveToFalse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
 version: 1
@@ -41,7 +42,7 @@ proxies:
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.True(t, cfg.Proxies[0].Active)
+	require.False(t, cfg.Proxies[0].Active)
 }
 
 // TestSaveReplacesConfigurationAndPreservesExistingPermissions covers atomic rewrite behavior.
@@ -140,7 +141,7 @@ func TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration(t *testing.T) {
 // TestManagedYAMLFiltersRoundTripAndValidate covers managed filter persistence and checks.
 func TestManagedYAMLFiltersRoundTripAndValidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
-	source := "version: 1\nfilters:\n  - name: block-admin\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: /admin\n"
+	source := "version: 1\nfilters:\n  - name: block-admin\n    active: true\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: /admin\n"
 	cfg := validConfig()
 	cfg.ManagedYAMLFilters = []ManagedYAMLFilter{{Name: "block-admin", YAML: source}}
 	require.NoError(t, Save(path, cfg))

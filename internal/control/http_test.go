@@ -60,6 +60,22 @@ func TestAPIStartsEmptyAndManagesInactiveProxy(t *testing.T) {
 	require.Contains(t, string(data), "proxies: []")
 }
 
+// TestAPIProxyCreationDefaultsInactive verifies that creation requires an
+// explicit active: true before a listener is started.
+func TestAPIProxyCreationDefaultsInactive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	store, err := config.OpenOrCreateStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+
+	response := serveAPI(NewHandler(manager, []string{"test-token"}), http.MethodPost, "/api/v1/proxies", `{"name":"staged","protocol":"tcp","listen":"127.0.0.1:31337","upstream":"127.0.0.1:31338"}`)
+	require.Equal(t, http.StatusCreated, response.Code)
+	require.False(t, store.Snapshot().Proxies[0].Active)
+}
+
 // TestAPIRejectsUnknownFilterWithoutPersisting protects validation before persistence.
 func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
@@ -236,7 +252,7 @@ func jsonString(value string) string {
 
 // yamlFilterDocument returns a minimal request-path rejection rule.
 func yamlFilterDocument(name, path string) string {
-	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: " + path + "\n"
+	return "version: 1\nfilters:\n  - name: " + name + "\n    active: true\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: " + path + "\n"
 }
 
 // TestAPIReportsListenerConflict maps bind failures to conflict responses.
@@ -253,7 +269,7 @@ func TestAPIReportsListenerConflict(t *testing.T) {
 	require.NoError(t, manager.Start(context.Background()))
 	t.Cleanup(manager.Close)
 
-	body := `{"name":"web","protocol":"tcp","listen":"` + occupied.Addr().String() + `","upstream":"127.0.0.1:31338"}`
+	body := `{"name":"web","active":true,"protocol":"tcp","listen":"` + occupied.Addr().String() + `","upstream":"127.0.0.1:31338"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/proxies", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()

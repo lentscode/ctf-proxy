@@ -35,6 +35,7 @@ export const proxyDefinitionSchema = z.object({
 
 const filterViewSchema = z.object({
   name: z.string(),
+  active: z.boolean(),
   source: z.string(),
   editable: z.boolean(),
   protocols: z.array(z.string()),

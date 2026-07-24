@@ -20,6 +20,7 @@ const conditionSchema = z.object({
 
 export const managedFilterDraftSchema = z.object({
   name: z.string().trim().min(1, 'Filter name is required.'),
+  active: z.boolean(),
   protocol: filterProtocolSchema,
   direction: filterDirectionSchema,
   conditions: z.array(conditionSchema).min(1, 'Add at least one condition.'),
@@ -51,10 +52,16 @@ export const managedFilterDraftSchema = z.object({
 
 export type ManagedFilterDraft = z.infer<typeof managedFilterDraftSchema>
 
+const yamlBooleanSchema = z.preprocess(
+  (value) => value === 'true' ? true : value === 'false' ? false : value,
+  z.boolean(),
+)
+
 const yamlDocumentSchema = z.object({
   version: z.union([z.literal(1), z.literal('1')]),
   filters: z.array(z.object({
     name: z.string(),
+    active: yamlBooleanSchema.optional().default(false),
     protocol: filterProtocolSchema,
     direction: filterDirectionSchema,
     action: z.literal('reject'),
@@ -97,7 +104,7 @@ export function labelForField(field: MatchField): string {
 // createEmptyDraft creates a valid initial draft scoped to a target proxy protocol.
 export function createEmptyDraft(protocol: FilterProtocol): ManagedFilterDraft {
   return {
-    name: '', protocol, direction: 'request',
+    name: '', active: false, protocol, direction: 'request',
     conditions: [{ field: availableFields(protocol, 'request')[0], header: '', operator: 'contains', value: '' }],
   }
 }
@@ -108,6 +115,7 @@ export function parseManagedFilterYAML(source: string): ManagedFilterDraft {
   const rule = document.filters[0]
   return managedFilterDraftSchema.parse({
     name: rule.name,
+    active: rule.active,
     protocol: rule.protocol,
     direction: rule.direction,
     conditions: rule.match.all.map((condition) => ({
@@ -126,6 +134,7 @@ export function serializeManagedFilterYAML(draft: ManagedFilterDraft): string {
     version: 1,
     filters: [{
       name: valid.name,
+      active: valid.active,
       protocol: valid.protocol,
       direction: valid.direction,
       action: 'reject',

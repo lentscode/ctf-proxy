@@ -149,7 +149,7 @@ function ManagedEditor({ filterName, managed, isSaving, saveError, onSave, onCan
 }
 
 function FilterRow({ filter, isRemoving, onEdit, onRemove }: { filter: FilterView, isRemoving: boolean, onEdit?: () => void, onRemove: () => void }) {
-  const metadata = [...filter.protocols, ...filter.directions, filter.needs_http_body ? 'HTTP body' : undefined].filter(Boolean)
+  const metadata = [filter.active ? 'active' : 'inactive', ...filter.protocols, ...filter.directions, filter.needs_http_body ? 'HTTP body' : undefined].filter(Boolean)
   return <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-zinc-700 px-5 py-4 max-sm:items-start" role="group" aria-label={`Filter ${filter.name}`}>
     <div className="min-w-0"><p className="m-0 text-sm text-zinc-100">{filter.name}</p><p className="mt-1 mb-0 break-words font-mono text-[11px] leading-tight text-zinc-400">{filter.source} · {metadata.join(' · ') || 'metadata unavailable'}</p></div>
     <div className="flex items-center gap-2">{onEdit && <button type="button" className="min-h-8 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-2.5 text-xs font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={onEdit}>Edit</button>}<button type="button" className="min-h-8 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-2.5 text-xs font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60" onClick={onRemove} disabled={isRemoving}>{isRemoving ? 'Removing…' : 'Remove'}</button></div>
@@ -157,7 +157,7 @@ function FilterRow({ filter, isRemoving, onEdit, onRemove }: { filter: FilterVie
 }
 
 function unavailableFilter(name: string): FilterView {
-  return { name, source: 'unavailable', editable: false, protocols: [], directions: [], needs_http_body: false }
+  return { name, active: false, source: 'unavailable', editable: false, protocols: [], directions: [], needs_http_body: false }
 }
 
 function proxySectionID(name: string): string {

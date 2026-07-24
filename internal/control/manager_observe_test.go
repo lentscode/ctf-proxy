@@ -182,5 +182,5 @@ func assertTCPProxyRoundTrip(t *testing.T, address string) {
 
 // tcpYAMLFilter returns a minimal TCP rejection rule for manager tests.
 func tcpYAMLFilter(name, value string) string {
-	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: " + value + "\n"
+	return "version: 1\nfilters:\n  - name: " + name + "\n    active: true\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: " + value + "\n"
 }

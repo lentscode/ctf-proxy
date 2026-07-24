@@ -58,34 +58,6 @@ type Proxy struct {
 	Filters  []string `yaml:"filters,omitempty"`
 }
 
-// UnmarshalYAML defaults Active to true when it is omitted. A pointer is used
-// while decoding so an explicit active: false remains distinguishable from an
-// absent field.
-func (p *Proxy) UnmarshalYAML(node *yaml.Node) error {
-	var decoded struct {
-		Name     string   `yaml:"name"`
-		Active   *bool    `yaml:"active"`
-		Protocol string   `yaml:"protocol"`
-		Listen   string   `yaml:"listen"`
-		Upstream string   `yaml:"upstream"`
-		Filters  []string `yaml:"filters,omitempty"`
-	}
-	if err := node.Load(&decoded, yaml.WithKnownFields()); err != nil {
-		return err
-	}
-
-	p.Name = decoded.Name
-	p.Active = true
-	if decoded.Active != nil {
-		p.Active = *decoded.Active
-	}
-	p.Protocol = decoded.Protocol
-	p.Listen = decoded.Listen
-	p.Upstream = decoded.Upstream
-	p.Filters = decoded.Filters
-	return nil
-}
-
 // Store serializes in-process configuration changes and persists each accepted
 // version before making it visible to callers. It is intended to be shared by
 // a future local control-plane API.

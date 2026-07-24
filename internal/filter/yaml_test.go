@@ -16,6 +16,7 @@ func TestCompileYAMLEvaluatesAllSupportedMatchers(t *testing.T) {
 version: 1
 filters:
   - name: tcp-exact
+    active: true
     protocol: tcp
     direction: request
     action: reject
@@ -25,6 +26,7 @@ filters:
           operator: exact
           value: ping
   - name: http-contains
+    active: true
     protocol: http
     direction: request
     action: reject
@@ -70,6 +72,7 @@ func TestCompileYAMLAllowsWhenBodyWasSkipped(t *testing.T) {
 version: 1
 filters:
   - name: body-rule
+    active: true
     protocol: http
     direction: response
     action: reject
@@ -89,6 +92,32 @@ filters:
 	assert.Equal(t, ActionAllow, decision.Action)
 }
 
+// TestCompileYAMLInactiveRulesAreSkipped verifies that a filter is inactive
+// unless its YAML declaration explicitly sets active to true.
+func TestCompileYAMLInactiveRulesAreSkipped(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		active string
+		want   Action
+	}{
+		{name: "omitted", active: "", want: ActionAllow},
+		{name: "false", active: "    active: false\n", want: ActionAllow},
+		{name: "true", active: "    active: true\n", want: ActionReject},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			filters, err := CompileYAML([]byte("version: 1\nfilters:\n  - name: test\n" + testCase.active + "    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.body\n          operator: contains\n          value: secret\n"))
+			require.NoError(t, err)
+
+			chain, err := NewChain(filters...)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want == ActionReject, chain.NeedsHTTPBody(DirectionRequest))
+			assert.Equal(t, testCase.want, chain.Evaluate(context.Background(), Message{
+				Protocol: ProtocolHTTP, Direction: DirectionRequest, HTTP: &HTTPMessage{Body: []byte("secret")},
+			}).Action)
+		})
+	}
+}
+
 // TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue covers the explicit
 // RE2-safe alternative to negative-lookahead regular expressions.
 func TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue(t *testing.T) {
@@ -96,6 +125,7 @@ func TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue(t *testing.T) {
 version: 1
 filters:
   - name: require-checker
+    active: true
     protocol: http
     direction: request
     action: reject
@@ -139,10 +169,10 @@ func TestCompileYAMLRejectsInvalidRules(t *testing.T) {
 		input string
 	}{
 		{name: "unsupported version", input: "version: 2\nfilters: []\n"},
-		{name: "missing action", input: "version: 1\nfilters:\n  - name: no-action\n    protocol: tcp\n    direction: request\n    match: {all: [{field: tcp.body, operator: exact, value: x}]}\n"},
-		{name: "protocol-incompatible field", input: "version: 1\nfilters:\n  - name: invalid-field\n    protocol: tcp\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
-		{name: "response path", input: "version: 1\nfilters:\n  - name: response-path\n    protocol: http\n    direction: response\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
-		{name: "invalid regular expression", input: "version: 1\nfilters:\n  - name: invalid-regex\n    protocol: http\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: regex, value: '['}]}\n"},
+		{name: "missing action", input: "version: 1\nfilters:\n  - name: no-action\n    active: true\n    protocol: tcp\n    direction: request\n    match: {all: [{field: tcp.body, operator: exact, value: x}]}\n"},
+		{name: "protocol-incompatible field", input: "version: 1\nfilters:\n  - name: invalid-field\n    active: true\n    protocol: tcp\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
+		{name: "response path", input: "version: 1\nfilters:\n  - name: response-path\n    active: true\n    protocol: http\n    direction: response\n    action: reject\n    match: {all: [{field: http.path, operator: exact, value: x}]}\n"},
+		{name: "invalid regular expression", input: "version: 1\nfilters:\n  - name: invalid-regex\n    active: true\n    protocol: http\n    direction: request\n    action: reject\n    match: {all: [{field: http.path, operator: regex, value: '['}]}\n"},
 		{name: "unknown top-level field", input: "version: 1\nunknown: true\nfilters: []\n"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -168,5 +198,5 @@ func TestLoadYAMLFilesPreservesOrder(t *testing.T) {
 
 // yamlRuleDocument returns a minimal HTTP path rejection document.
 func yamlRuleDocument(name string) string {
-	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: ping\n"
+	return "version: 1\nfilters:\n  - name: " + name + "\n    active: true\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: ping\n"
 }

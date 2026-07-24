@@ -221,7 +221,7 @@ func (a *api) proxies(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 			return
 		}
-		definition := input.definition(true)
+		definition := input.definition()
 		view, err := a.manager.Create(definition)
 		if err != nil {
 			writeManagerError(w, err)
@@ -276,7 +276,7 @@ func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 			writeError(w, http.StatusBadRequest, "validation_error", "active is required for replacement")
 			return
 		}
-		view, err := a.manager.Replace(name, input.definition(false))
+		view, err := a.manager.Replace(name, input.definition())
 		if err != nil {
 			writeManagerError(w, err)
 			return
@@ -358,8 +358,9 @@ func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 // definition converts an API input into the configuration representation.
-func (i proxyInput) definition(defaultActive bool) config.Proxy {
-	active := defaultActive
+// A proxy is inactive unless active: true was supplied by the caller.
+func (i proxyInput) definition() config.Proxy {
+	active := false
 	if i.Active != nil {
 		active = *i.Active
 	}

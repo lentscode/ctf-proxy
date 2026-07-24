@@ -50,6 +50,7 @@ type yamlRule struct {
 	Direction string    `yaml:"direction"`
 	Action    string    `yaml:"action"`
 	Match     yamlMatch `yaml:"match"`
+	Active    bool      `yaml:"active"`
 }
 
 // yamlMatch groups the conditions that must all match for a rule to reject.
@@ -144,6 +145,7 @@ type compiledYAMLRule struct {
 	name         string
 	requirements Requirements
 	conditions   []compiledYAMLCondition
+	active       bool
 }
 
 // compiledYAMLCondition stores parsed matching data for allocation-free evaluation.
@@ -182,6 +184,7 @@ func compileYAMLRule(rule yamlRule) (*compiledYAMLRule, error) {
 			Directions: []Direction{direction},
 		},
 		conditions: make([]compiledYAMLCondition, 0, len(rule.Match.All)),
+		active:     rule.Active,
 	}
 
 	for index, condition := range rule.Match.All {
@@ -319,13 +322,32 @@ func (r *compiledYAMLRule) Name() string {
 	return r.name
 }
 
-// Requirements returns the protocol, direction, and body-buffering needs of the rule.
-func (r *compiledYAMLRule) Requirements() Requirements {
+// Active reports whether the YAML declaration enables this rule.
+func (r *compiledYAMLRule) Active() bool {
+	return r.active
+}
+
+// DeclaredRequirements returns the rule's protocol and direction metadata,
+// regardless of whether it is currently active.
+func (r *compiledYAMLRule) DeclaredRequirements() Requirements {
 	return r.requirements
 }
 
-// Evaluate rejects when every compiled condition matches the message.
+// Requirements returns the protocol, direction, and body-buffering needs of an
+// active rule. Inactive rules are skipped entirely, including body buffering.
+func (r *compiledYAMLRule) Requirements() Requirements {
+	if !r.active {
+		return Requirements{}
+	}
+	return r.requirements
+}
+
+// Evaluate rejects when this active rule's compiled conditions all match.
 func (r *compiledYAMLRule) Evaluate(_ context.Context, message Message) (Decision, error) {
+	if !r.active {
+		return Decision{Action: ActionAllow}, nil
+	}
+
 	for _, condition := range r.conditions {
 		if !condition.matches(message) {
 			return Decision{Action: ActionAllow}, nil

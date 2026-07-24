@@ -82,6 +82,7 @@ export function ManagedFilterForm({ initial, isExisting, assignedProxies = [], i
           </select>
         </label>
       </div>
+      <label className="flex items-center gap-2 text-sm text-zinc-100"><input className="accent-zinc-200" type="checkbox" checked={draft.active} onChange={(event) => { setDraft((current) => ({ ...current, active: event.target.checked })); setValidationError(undefined) }} /> Enable this filter</label>
       <fieldset className="grid gap-3 border-0 p-0">
         <legend className="text-xs font-semibold text-zinc-400">All-match conditions</legend>
         {draft.conditions.map((condition, index) => <ConditionEditor key={index} condition={condition} index={index} protocol={draft.protocol} direction={draft.direction} canRemove={draft.conditions.length > 1} onUpdate={(update) => updateCondition(index, update)} onRemove={() => removeCondition(index)} />)}

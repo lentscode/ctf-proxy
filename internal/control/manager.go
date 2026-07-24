@@ -51,6 +51,7 @@ type ProxyView struct {
 // FilterView describes a filter available for proxy selection.
 type FilterView struct {
 	Name          string   `json:"name"`
+	Active        bool     `json:"active"`
 	Source        string   `json:"source"`
 	Editable      bool     `json:"editable"`
 	Protocols     []string `json:"protocols"`
@@ -681,7 +682,13 @@ func (m *Manager) catalogFor(cfg config.Config) (*filterCatalog, error) {
 // describeFilter converts filter requirements into dashboard metadata.
 func describeFilter(current filter.Filter, source string) FilterView {
 	requirements := current.Requirements()
-	view := FilterView{Name: current.Name(), Source: source, NeedsHTTPBody: requirements.NeedsHTTPBody}
+	if current, ok := current.(interface{ DeclaredRequirements() filter.Requirements }); ok {
+		requirements = current.DeclaredRequirements()
+	}
+	view := FilterView{Name: current.Name(), Active: true, Source: source, NeedsHTTPBody: requirements.NeedsHTTPBody}
+	if current, ok := current.(interface{ Active() bool }); ok {
+		view.Active = current.Active()
+	}
 	for _, protocol := range requirements.Protocols {
 		if protocol == filter.ProtocolTCP {
 			view.Protocols = append(view.Protocols, "tcp")
