@@ -6,6 +6,7 @@ import './styles/index.css'
 import App from './app/App.tsx'
 import { queryClient } from './lib/query-client.ts'
 
+// Mount the client-rendered dashboard with shared query state and browser routing.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

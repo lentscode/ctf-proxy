@@ -28,6 +28,8 @@ type EventSink interface {
 	TryReport(Event)
 }
 
+// discardEventSink is the default sink for chains without observability.
 type discardEventSink struct{}
 
+// TryReport intentionally drops events when no sink was configured.
 func (discardEventSink) TryReport(Event) {}

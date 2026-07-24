@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// main parses polling options and runs the local TCP test client.
 func main() {
 	address := flag.String("address", "", "TCP address to connect to (required)")
 	message := flag.String("message", "ping", "payload to send and verify")
@@ -37,6 +38,7 @@ func main() {
 	}
 }
 
+// run performs the configured number of exchanges, waiting between attempts.
 func run(ctx context.Context, address string, message []byte, interval, timeout time.Duration, count int) error {
 	for attempt := 1; count == 0 || attempt <= count; attempt++ {
 		if err := exchange(ctx, address, message, timeout); err != nil && !errors.Is(err, context.Canceled) {
@@ -58,6 +60,7 @@ func run(ctx context.Context, address string, message []byte, interval, timeout 
 	return nil
 }
 
+// exchange sends message to address and verifies that the response is identical.
 func exchange(ctx context.Context, address string, message []byte, timeout time.Duration) error {
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.DialContext(ctx, "tcp", address)

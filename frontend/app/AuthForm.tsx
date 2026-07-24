@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 
+// AuthFormProps describes the token form's controlled state and submit action.
 interface AuthFormProps {
   token: string
   error?: string
@@ -8,7 +9,9 @@ interface AuthFormProps {
   onSubmit: (token: string) => void
 }
 
+// AuthForm collects the loopback API bearer token without exposing it in plain text.
 export function AuthForm({ token, error, isConnecting, onTokenChange, onSubmit }: AuthFormProps) {
+  // submit keeps the form interaction from triggering a document navigation.
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     onSubmit(token)

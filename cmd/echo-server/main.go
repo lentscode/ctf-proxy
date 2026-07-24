@@ -14,6 +14,7 @@ import (
 	"syscall"
 )
 
+// main runs the local TCP echo-service test helper.
 func main() {
 	listenAddr := flag.String("listen", "127.0.0.1:9000", "TCP address to listen on")
 	flag.Parse()
@@ -26,6 +27,7 @@ func main() {
 	}
 }
 
+// run listens for connections until the context is cancelled.
 func run(ctx context.Context, listenAddr string) error {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -51,6 +53,7 @@ func run(ctx context.Context, listenAddr string) error {
 	}
 }
 
+// echo copies all bytes received on conn back to the same connection.
 func echo(conn net.Conn) {
 	defer conn.Close()
 	_, _ = io.Copy(conn, conn)

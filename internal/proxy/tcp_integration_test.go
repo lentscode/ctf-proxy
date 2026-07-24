@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTCPProxyForwardsTCP covers bidirectional TCP forwarding.
 func TestTCPProxyForwardsTCP(t *testing.T) {
 	upstreamAddr := startEchoServer(t)
 
@@ -45,6 +46,7 @@ func TestTCPProxyForwardsTCP(t *testing.T) {
 	}
 }
 
+// TestTCPProxyServe verifies serving through a caller-provided listener.
 func TestTCPProxyServe(t *testing.T) {
 	upstreamAddr := startEchoServer(t)
 	proxyAddr, cancel, serveDone := startTCPProxy(t, upstreamAddr, make(chan struct{}, 1))
@@ -72,6 +74,7 @@ func TestTCPProxyServe(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestTCPProxyServeClosesConnectionsWhenSlotsAreFull protects rejection cleanup.
 func TestTCPProxyServeClosesConnectionsWhenSlotsAreFull(t *testing.T) {
 	upstreamListener, err := net.Listen("tcp", "localhost:0")
 	require.NoError(t, err)
@@ -116,6 +119,7 @@ func TestTCPProxyServeClosesConnectionsWhenSlotsAreFull(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestTCPProxyRejectsRequestChunks verifies request-direction filtering.
 func TestTCPProxyRejectsRequestChunks(t *testing.T) {
 	upstream, err := net.Listen("tcp", "localhost:0")
 	require.NoError(t, err)
@@ -175,6 +179,7 @@ func TestTCPProxyRejectsRequestChunks(t *testing.T) {
 	}
 }
 
+// TestTCPProxyRejectsResponseChunks verifies response-direction filtering.
 func TestTCPProxyRejectsResponseChunks(t *testing.T) {
 	upstream, err := net.Listen("tcp", "localhost:0")
 	require.NoError(t, err)
@@ -219,6 +224,7 @@ func TestTCPProxyRejectsResponseChunks(t *testing.T) {
 	}
 }
 
+// startEchoServer starts the upstream echo service used by TCP tests.
 func startEchoServer(t *testing.T) string {
 	t.Helper()
 
@@ -250,6 +256,7 @@ func startEchoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
+// startTCPProxyOnce starts one runner on a dynamically selected listener.
 func startTCPProxyOnce(t *testing.T, p *TCPProxy) (*net.TCPAddr, <-chan error) {
 	t.Helper()
 
@@ -278,6 +285,7 @@ func startTCPProxyOnce(t *testing.T, p *TCPProxy) (*net.TCPAddr, <-chan error) {
 	return addr, forwardDone
 }
 
+// startTCPProxy constructs and starts a TCP proxy for integration tests.
 func startTCPProxy(t *testing.T, upstreamAddr string, slots chan struct{}) (*net.TCPAddr, context.CancelFunc, <-chan error) {
 	t.Helper()
 

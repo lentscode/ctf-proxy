@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestHubRetainsLatestEventsWithoutConsumption protects bounded history snapshots.
 func TestHubRetainsLatestEventsWithoutConsumption(t *testing.T) {
 	hub := NewHub()
 	for i := 0; i < HistoryCapacity+1; i++ {
@@ -21,6 +22,7 @@ func TestHubRetainsLatestEventsWithoutConsumption(t *testing.T) {
 	assert.Equal(t, uint64(HistoryCapacity+1), first[len(first)-1].ID)
 }
 
+// TestHubDisconnectsOnlySlowSubscriber verifies slow consumers do not block the hub.
 func TestHubDisconnectsOnlySlowSubscriber(t *testing.T) {
 	hub := NewHub()
 	slow, ok := hub.Subscribe()

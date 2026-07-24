@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestManagerReportsRejectedConfiguration verifies sanitized control failure events.
 func TestManagerReportsRejectedConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -35,6 +36,7 @@ func TestManagerReportsRejectedConfiguration(t *testing.T) {
 	require.Equal(t, observe.KindControlConfigurationRejected, events[0].Kind)
 }
 
+// TestManagerReconcilesActiveProxyWhenManagedFilterChanges covers filter-driven restarts.
 func TestManagerReconcilesActiveProxyWhenManagedFilterChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	reserved, err := net.Listen("tcp", "127.0.0.1:0")
@@ -66,6 +68,7 @@ func TestManagerReconcilesActiveProxyWhenManagedFilterChanges(t *testing.T) {
 	require.Contains(t, store.Snapshot().ManagedYAMLFilters[0].YAML, "pong")
 }
 
+// TestManagerReplaceRestoresActiveProxyAfterListenerConflict covers rollback after bind failure.
 func TestManagerReplaceRestoresActiveProxyAfterListenerConflict(t *testing.T) {
 	manager, store, original, upstream := startActiveTCPManager(t)
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
@@ -87,6 +90,7 @@ func TestManagerReplaceRestoresActiveProxyAfterListenerConflict(t *testing.T) {
 	assertTCPProxyRoundTrip(t, original.Listen)
 }
 
+// TestManagerReplaceRestoresActiveProxyAfterPersistenceFailure covers rollback after save failure.
 func TestManagerReplaceRestoresActiveProxyAfterPersistenceFailure(t *testing.T) {
 	manager, store, original, upstream := startActiveTCPManager(t)
 	changedUpstream := unusedControlTCPAddress(t)
@@ -109,6 +113,7 @@ func TestManagerReplaceRestoresActiveProxyAfterPersistenceFailure(t *testing.T) 
 	assertTCPProxyRoundTrip(t, original.Listen)
 }
 
+// unusedControlTCPAddress returns a released local address for manager tests.
 func unusedControlTCPAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -118,6 +123,7 @@ func unusedControlTCPAddress(t *testing.T) string {
 	return address
 }
 
+// startActiveTCPManager starts a manager with one active echo proxy.
 func startActiveTCPManager(t *testing.T) (*Manager, *config.Store, config.Proxy, string) {
 	t.Helper()
 	upstream := startControlTestEchoServer(t)
@@ -138,6 +144,7 @@ func startActiveTCPManager(t *testing.T) (*Manager, *config.Store, config.Proxy,
 	return manager, store, original, upstream
 }
 
+// startControlTestEchoServer starts the TCP upstream used by lifecycle tests.
 func startControlTestEchoServer(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -158,6 +165,7 @@ func startControlTestEchoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
+// assertTCPProxyRoundTrip verifies that the active proxy reaches its upstream.
 func assertTCPProxyRoundTrip(t *testing.T, address string) {
 	t.Helper()
 	connection, err := net.DialTimeout("tcp", address, time.Second)
@@ -172,6 +180,7 @@ func assertTCPProxyRoundTrip(t *testing.T, address string) {
 	require.Equal(t, "rollback-check", string(response))
 }
 
+// tcpYAMLFilter returns a minimal TCP rejection rule for manager tests.
 func tcpYAMLFilter(name, value string) string {
 	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: " + value + "\n"
 }

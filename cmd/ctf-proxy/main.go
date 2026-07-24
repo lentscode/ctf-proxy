@@ -22,6 +22,7 @@ const (
 	defaultTokensFile  = ".tokens"
 )
 
+// main starts the control plane and keeps the process alive until interrupted.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -36,6 +37,7 @@ func main() {
 	}
 }
 
+// run opens persistent state, starts managed proxies, and serves the loopback API.
 func run(ctx context.Context, configPath string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	observation := observe.NewObserver(os.Stderr)

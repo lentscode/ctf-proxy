@@ -109,11 +109,13 @@ func (c *Chain) NeedsHTTPBody(direction Direction) bool {
 	return false
 }
 
+// report forwards an event without allowing a faulty sink to affect filtering.
 func (c *Chain) report(event Event) {
 	defer func() { _ = recover() }()
 	c.events.TryReport(event)
 }
 
+// evaluateSafely isolates filter errors, invalid decisions, and panics.
 func evaluateSafely(ctx context.Context, current Filter, message Message) (decision Decision, failure EventKind) {
 	defer func() {
 		if recover() != nil {
@@ -132,14 +134,17 @@ func evaluateSafely(ctx context.Context, current Filter, message Message) (decis
 	return decision, EventKindUnknown
 }
 
+// matches checks whether a filter is eligible for the message's protocol and direction.
 func matches(requirements Requirements, message Message) bool {
 	return matchesRequirements(requirements, message.Protocol, message.Direction)
 }
 
+// matchesRequirements applies the zero-list wildcard semantics for requirements.
 func matchesRequirements(requirements Requirements, protocol Protocol, direction Direction) bool {
 	return containsProtocol(requirements.Protocols, protocol) && containsDirection(requirements.Directions, direction)
 }
 
+// containsProtocol reports whether wanted is allowed by protocols.
 func containsProtocol(protocols []Protocol, wanted Protocol) bool {
 	if len(protocols) == 0 {
 		return true
@@ -152,6 +157,7 @@ func containsProtocol(protocols []Protocol, wanted Protocol) bool {
 	return false
 }
 
+// containsDirection reports whether wanted is allowed by directions.
 func containsDirection(directions []Direction, wanted Direction) bool {
 	if len(directions) == 0 {
 		return true
@@ -164,6 +170,7 @@ func containsDirection(directions []Direction, wanted Direction) bool {
 	return false
 }
 
+// validateRequirements rejects protocol and direction values outside the contract.
 func validateRequirements(filterName string, requirements Requirements) error {
 	for _, protocol := range requirements.Protocols {
 		if protocol != ProtocolTCP && protocol != ProtocolHTTP {

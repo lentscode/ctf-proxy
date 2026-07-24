@@ -2,6 +2,7 @@ package main
 
 import "testing"
 
+// TestDefaultControlAddressIsLoopback protects the loopback-only default.
 func TestDefaultControlAddressIsLoopback(t *testing.T) {
 	testCases := []struct {
 		name string

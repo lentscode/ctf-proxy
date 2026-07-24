@@ -13,8 +13,10 @@ import (
 	"strings"
 )
 
+// ErrUnauthorized indicates that a request did not present a valid bearer token.
 var ErrUnauthorized = errors.New("unauthorized")
 
+// checkAuthMiddleware validates the request's bearer token in constant time.
 func (a *api) checkAuthMiddleware(r *http.Request) error {
 	parts := strings.Fields(r.Header.Get("Authorization"))
 	if len(parts) != 2 || parts[0] != "Bearer" || parts[1] == "" {
@@ -30,6 +32,7 @@ func (a *api) checkAuthMiddleware(r *http.Request) error {
 	return ErrUnauthorized
 }
 
+// GenerateToken creates a URL-safe, cryptographically random control token.
 func GenerateToken() (string, error) {
 	bytes := make([]byte, 32)
 	_, err := io.ReadFull(rand.Reader, bytes)
@@ -39,6 +42,7 @@ func GenerateToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
+// LoadTokens reads one non-empty bearer token per line from path.
 func LoadTokens(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -60,6 +64,7 @@ func LoadTokens(path string) ([]string, error) {
 	return tokens, nil
 }
 
+// SaveTokens writes bearer tokens with owner-only file permissions.
 func SaveTokens(path string, tokens []string) error {
 	content := strings.Join(tokens, "\n")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCompileYAMLEvaluatesAllSupportedMatchers covers every supported matcher kind.
 func TestCompileYAMLEvaluatesAllSupportedMatchers(t *testing.T) {
 	filters, err := CompileYAML([]byte(`
 version: 1
@@ -63,6 +64,7 @@ filters:
 	}).Action)
 }
 
+// TestCompileYAMLAllowsWhenBodyWasSkipped protects fail-open behavior for unavailable bodies.
 func TestCompileYAMLAllowsWhenBodyWasSkipped(t *testing.T) {
 	filters, err := CompileYAML([]byte(`
 version: 1
@@ -87,6 +89,50 @@ filters:
 	assert.Equal(t, ActionAllow, decision.Action)
 }
 
+// TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue covers the explicit
+// RE2-safe alternative to negative-lookahead regular expressions.
+func TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue(t *testing.T) {
+	filters, err := CompileYAML([]byte(`
+version: 1
+filters:
+  - name: require-checker
+    protocol: http
+    direction: request
+    action: reject
+    match:
+      all:
+        - field: http.header
+          header: User-Agent
+          operator: not_contains
+          value: checker
+`))
+	require.NoError(t, err)
+
+	for _, testCase := range []struct {
+		name   string
+		header []string
+		want   Action
+	}{
+		{name: "missing checker", header: []string{"curl/8"}, want: ActionReject},
+		{name: "includes checker", header: []string{"checker/1"}, want: ActionAllow},
+		{name: "one value includes checker", header: []string{"curl/8", "checker/1"}, want: ActionAllow},
+		{name: "header absent", want: ActionAllow},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			header := make(map[string][]string)
+			if testCase.header != nil {
+				header["User-Agent"] = testCase.header
+			}
+			decision, evaluateErr := filters[0].Evaluate(context.Background(), Message{
+				Protocol: ProtocolHTTP, Direction: DirectionRequest, HTTP: &HTTPMessage{Header: header},
+			})
+			require.NoError(t, evaluateErr)
+			assert.Equal(t, testCase.want, decision.Action)
+		})
+	}
+}
+
+// TestCompileYAMLRejectsInvalidRules covers malformed and incompatible YAML rules.
 func TestCompileYAMLRejectsInvalidRules(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string
@@ -106,6 +152,7 @@ func TestCompileYAMLRejectsInvalidRules(t *testing.T) {
 	}
 }
 
+// TestLoadYAMLFilesPreservesOrder protects file and rule declaration order.
 func TestLoadYAMLFilesPreservesOrder(t *testing.T) {
 	directory := t.TempDir()
 	first := filepath.Join(directory, "first.yaml")
@@ -119,6 +166,7 @@ func TestLoadYAMLFilesPreservesOrder(t *testing.T) {
 	assert.Equal(t, []string{"first", "second"}, []string{filters[0].Name(), filters[1].Name()})
 }
 
+// yamlRuleDocument returns a minimal HTTP path rejection document.
 func yamlRuleDocument(name string) string {
 	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: tcp\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: tcp.body\n          operator: exact\n          value: ping\n"
 }

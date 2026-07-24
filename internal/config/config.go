@@ -278,6 +278,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// clone returns a configuration copy whose slices can be changed independently.
 func clone(cfg Config) Config {
 	copy := cfg
 	copy.FilterFiles = append([]string(nil), cfg.FilterFiles...)
@@ -290,6 +291,7 @@ func clone(cfg Config) Config {
 	return copy
 }
 
+// validate checks the protocol-specific listener and upstream topology.
 func (p Proxy) validate() error {
 	if !proxyNamePattern.MatchString(p.Name) {
 		return errors.New("name must match [A-Za-z0-9][A-Za-z0-9_-]{0,62}")
@@ -315,6 +317,7 @@ func (p Proxy) validate() error {
 	return nil
 }
 
+// validateAddress accepts the host:port form used by TCP endpoints.
 func validateAddress(address, field string) error {
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -327,6 +330,7 @@ func validateAddress(address, field string) error {
 	return nil
 }
 
+// validateHTTPUpstream accepts only a bare HTTP or HTTPS origin URL.
 func validateHTTPUpstream(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -341,6 +345,7 @@ func validateHTTPUpstream(raw string) error {
 	return nil
 }
 
+// ensureSingleDocument rejects trailing YAML documents after the first one.
 func ensureSingleDocument(decoder *yaml.Decoder) error {
 	var extra yaml.Node
 	err := decoder.Decode(&extra)

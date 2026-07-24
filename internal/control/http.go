@@ -53,12 +53,14 @@ func NewHandler(manager *Manager, tokens []string, hubs ...*observe.Hub) http.Ha
 	return &api{manager: manager, tokens: tokens, hub: hub}
 }
 
+// api routes authenticated HTTP requests to manager and observability services.
 type api struct {
 	manager *Manager
 	tokens  []string
 	hub     *observe.Hub
 }
 
+// proxyInput is the JSON representation accepted by proxy management endpoints.
 type proxyInput struct {
 	Name     string   `json:"name"`
 	Active   *bool    `json:"active"`
@@ -68,10 +70,12 @@ type proxyInput struct {
 	Filters  []string `json:"filters"`
 }
 
+// yamlFilterInput is the JSON wrapper for a managed YAML filter document.
 type yamlFilterInput struct {
 	YAML string `json:"yaml"`
 }
 
+// ServeHTTP authenticates and dispatches every local control-plane route.
 func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := a.checkAuthMiddleware(r); err != nil {
 		w.Header().Set("WWW-Authenticate", "Bearer")
@@ -120,6 +124,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
 }
 
+// events returns a bounded snapshot of retained operational events.
 func (a *api) events(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -141,6 +146,7 @@ func (a *api) events(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"events": a.hub.Snapshot(limit)})
 }
 
+// eventStream serves sanitized events as a bounded, heartbeat-enabled SSE stream.
 func (a *api) eventStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -182,6 +188,7 @@ func (a *api) eventStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// writeSSEComment writes and flushes an SSE keep-alive comment.
 func writeSSEComment(w http.ResponseWriter, controller *http.ResponseController, value string) bool {
 	_ = controller.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	if _, err := fmt.Fprintf(w, ": %s\n\n", value); err != nil {
@@ -190,6 +197,7 @@ func writeSSEComment(w http.ResponseWriter, controller *http.ResponseController,
 	return controller.Flush() == nil
 }
 
+// writeSSEEvent writes and flushes one observable event in SSE format.
 func writeSSEEvent(w http.ResponseWriter, controller *http.ResponseController, event observe.Event) bool {
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -202,6 +210,7 @@ func writeSSEEvent(w http.ResponseWriter, controller *http.ResponseController, e
 	return controller.Flush() == nil
 }
 
+// proxies handles collection-level proxy listing and creation.
 func (a *api) proxies(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -224,6 +233,7 @@ func (a *api) proxies(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// proxy handles one proxy's detail, lifecycle, and deletion routes.
 func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 	parts := strings.Split(tail, "/")
 	if len(parts) == 2 && parts[1] == "filters" {
@@ -283,6 +293,7 @@ func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 	}
 }
 
+// proxyFilters handles filters assigned to one proxy.
 func (a *api) proxyFilters(w http.ResponseWriter, r *http.Request, name string) {
 	switch r.Method {
 	case http.MethodGet:
@@ -309,6 +320,7 @@ func (a *api) proxyFilters(w http.ResponseWriter, r *http.Request, name string) 
 	}
 }
 
+// filter handles retrieval, replacement, and deletion of a managed filter.
 func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
 	if name == "" || strings.Contains(name, "/") {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
@@ -345,6 +357,7 @@ func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
 	}
 }
 
+// definition converts an API input into the configuration representation.
 func (i proxyInput) definition(defaultActive bool) config.Proxy {
 	active := defaultActive
 	if i.Active != nil {
@@ -353,6 +366,7 @@ func (i proxyInput) definition(defaultActive bool) config.Proxy {
 	return config.Proxy{Name: i.Name, Active: active, Protocol: i.Protocol, Listen: i.Listen, Upstream: i.Upstream, Filters: i.Filters}
 }
 
+// decodeJSON reads exactly one bounded JSON value and rejects unknown fields.
 func decodeJSON(r *http.Request, target any) error {
 	defer r.Body.Close()
 	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
@@ -367,6 +381,7 @@ func decodeJSON(r *http.Request, target any) error {
 	return nil
 }
 
+// writeManagerError maps lifecycle errors to stable HTTP responses.
 func writeManagerError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -380,12 +395,17 @@ func writeManagerError(w http.ResponseWriter, err error) {
 	}
 }
 
+// methodNotAllowed writes the common response for an unsupported HTTP method.
 func methodNotAllowed(w http.ResponseWriter) {
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 }
+
+// writeError writes a structured API error response.
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
+
+// writeJSON writes a JSON response with the supplied HTTP status.
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -9,6 +9,7 @@ type Reporter interface {
 // NopReporter discards every event.
 type NopReporter struct{}
 
+// Report discards the event.
 func (NopReporter) Report(Event) {}
 
 // FanoutReporter sends an event to each child. A broken observer is isolated
@@ -28,6 +29,7 @@ func NewFanoutReporter(reporters ...Reporter) *FanoutReporter {
 	return &FanoutReporter{reporters: filtered}
 }
 
+// Report invokes each child while isolating panics from other observers.
 func (r *FanoutReporter) Report(event Event) {
 	if r == nil {
 		return
@@ -48,11 +50,13 @@ func WithProxy(reporter Reporter, proxyName string) Reporter {
 	return proxyReporter{reporter: reporter, proxy: proxyName}
 }
 
+// proxyReporter supplies a default proxy identifier to delegated events.
 type proxyReporter struct {
 	reporter Reporter
 	proxy    string
 }
 
+// Report adds the configured proxy name before delegating the event.
 func (r proxyReporter) Report(event Event) {
 	if event.Proxy == "" {
 		event.Proxy = r.proxy

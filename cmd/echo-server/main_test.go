@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestEcho verifies that the helper preserves text and binary payloads.
 func TestEcho(t *testing.T) {
 	testCases := []struct {
 		name    string

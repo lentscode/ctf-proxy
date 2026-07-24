@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestHTTPProxyServeForwardsRequestAndResponse covers the normal HTTP data path.
 func TestHTTPProxyServeForwardsRequestAndResponse(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
@@ -75,6 +76,7 @@ func TestHTTPProxyServeForwardsRequestAndResponse(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyServeRejectsRequestsWhenSlotsAreFull protects the request budget.
 func TestHTTPProxyServeRejectsRequestsWhenSlotsAreFull(t *testing.T) {
 	requestStarted := make(chan struct{})
 	allowResponse := make(chan struct{})
@@ -121,6 +123,7 @@ func TestHTTPProxyServeRejectsRequestsWhenSlotsAreFull(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyRejectsRequestBeforeUpstream verifies request filtering prevents forwarding.
 func TestHTTPProxyRejectsRequestBeforeUpstream(t *testing.T) {
 	upstreamCalled := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -163,6 +166,7 @@ func TestHTTPProxyRejectsRequestBeforeUpstream(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyRejectsResponseBeforeClient verifies response filtering hides rejected data.
 func TestHTTPProxyRejectsResponseBeforeClient(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Blocked", "true")
@@ -199,6 +203,7 @@ func TestHTTPProxyRejectsResponseBeforeClient(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyRejectsRequestBodyBeforeUpstream covers buffered request-body filtering.
 func TestHTTPProxyRejectsRequestBodyBeforeUpstream(t *testing.T) {
 	upstreamCalled := make(chan struct{}, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -242,6 +247,7 @@ func TestHTTPProxyRejectsRequestBodyBeforeUpstream(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyRejectsResponseBodyBeforeClient covers buffered response-body filtering.
 func TestHTTPProxyRejectsResponseBodyBeforeClient(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("upstream secret"))
@@ -278,6 +284,7 @@ func TestHTTPProxyRejectsResponseBodyBeforeClient(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyPreservesOversizedRequestBodyWhenFiltering protects oversized request replay.
 func TestHTTPProxyPreservesOversizedRequestBodyWhenFiltering(t *testing.T) {
 	payload := strings.Repeat("x", int(DefaultMaxFilterBodyBytes)+1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,6 +322,7 @@ func TestHTTPProxyPreservesOversizedRequestBodyWhenFiltering(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// TestHTTPProxyPreservesOversizedResponseBodyWhenFiltering protects oversized response replay.
 func TestHTTPProxyPreservesOversizedResponseBodyWhenFiltering(t *testing.T) {
 	payload := strings.Repeat("x", int(DefaultMaxFilterBodyBytes)+1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -352,10 +360,12 @@ func TestHTTPProxyPreservesOversizedResponseBodyWhenFiltering(t *testing.T) {
 	requireProxyStopped(t, serveDone)
 }
 
+// startHTTPProxy starts an HTTP proxy without filters for integration tests.
 func startHTTPProxy(t *testing.T, upstreamURL string, slots chan struct{}) (string, context.CancelFunc, <-chan error) {
 	return startHTTPProxyWithFilters(t, upstreamURL, slots, nil)
 }
 
+// startHTTPProxyWithFilters starts an HTTP proxy with the supplied chain.
 func startHTTPProxyWithFilters(t *testing.T, upstreamURL string, slots chan struct{}, filters *filter.Chain) (string, context.CancelFunc, <-chan error) {
 	t.Helper()
 
@@ -372,6 +382,7 @@ func startHTTPProxyWithFilters(t *testing.T, upstreamURL string, slots chan stru
 	return listener.Addr().String(), cancel, serveDone
 }
 
+// requireProxyStopped waits for clean shutdown of an integration proxy.
 func requireProxyStopped(t *testing.T, serveDone <-chan error) {
 	t.Helper()
 

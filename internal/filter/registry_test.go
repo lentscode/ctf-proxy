@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestRegistryBuildsFreshFiltersInRequestedOrder protects registry order and isolation.
 func TestRegistryBuildsFreshFiltersInRequestedOrder(t *testing.T) {
 	registry := NewRegistry()
 	created := 0
@@ -27,6 +28,7 @@ func TestRegistryBuildsFreshFiltersInRequestedOrder(t *testing.T) {
 	assert.Equal(t, 3, created)
 }
 
+// TestRegistryRejectsInvalidRegistrationAndBuild covers registry input failures.
 func TestRegistryRejectsInvalidRegistrationAndBuild(t *testing.T) {
 	for _, testCase := range []struct {
 		name string

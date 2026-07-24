@@ -32,6 +32,7 @@ func NewSlogReporter(writer io.Writer) *SlogReporter {
 	return r
 }
 
+// run drains the asynchronous stderr queue until it is closed.
 func (r *SlogReporter) run() {
 	defer close(r.done)
 	for event := range r.queue {

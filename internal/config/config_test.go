@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestLoadValidatesAndRejectsUnknownFields ensures trusted YAML stays strict.
 func TestLoadValidatesAndRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
@@ -26,6 +27,7 @@ proxies:
 	require.ErrorContains(t, err, "unexpected")
 }
 
+// TestLoadDefaultsProxyActiveToTrue verifies omitted active fields start enabled.
 func TestLoadDefaultsProxyActiveToTrue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
@@ -42,6 +44,7 @@ proxies:
 	require.True(t, cfg.Proxies[0].Active)
 }
 
+// TestSaveReplacesConfigurationAndPreservesExistingPermissions covers atomic rewrite behavior.
 func TestSaveReplacesConfigurationAndPreservesExistingPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte("old"), 0o640))
@@ -56,6 +59,7 @@ func TestSaveReplacesConfigurationAndPreservesExistingPermissions(t *testing.T) 
 	require.Equal(t, os.FileMode(0o640), info.Mode().Perm())
 }
 
+// TestValidateRejectsInvalidConfigurations covers topology and schema validation failures.
 func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 	testCases := []struct {
 		name    string
@@ -81,6 +85,7 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsMoreThanOneDocument ensures configuration files contain one document.
 func TestLoadRejectsMoreThanOneDocument(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
@@ -98,6 +103,7 @@ proxies: []
 	require.ErrorContains(t, err, "exactly one YAML document")
 }
 
+// TestStoreUpdatesOnlyAfterPersistingValidConfiguration protects the store's commit ordering.
 func TestStoreUpdatesOnlyAfterPersistingValidConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	require.NoError(t, Save(path, validConfig()))
@@ -120,6 +126,7 @@ func TestStoreUpdatesOnlyAfterPersistingValidConfiguration(t *testing.T) {
 	require.Equal(t, "http", store.Snapshot().Proxies[0].Protocol)
 }
 
+// TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration covers first-run initialization.
 func TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := OpenOrCreateStore(path)
@@ -130,6 +137,7 @@ func TestOpenOrCreateStoreCreatesAnEmptyValidConfiguration(t *testing.T) {
 	require.Equal(t, Config{Version: Version, Proxies: []Proxy{}}, loaded)
 }
 
+// TestManagedYAMLFiltersRoundTripAndValidate covers managed filter persistence and checks.
 func TestManagedYAMLFiltersRoundTripAndValidate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	source := "version: 1\nfilters:\n  - name: block-admin\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: /admin\n"
@@ -160,6 +168,7 @@ func TestManagedYAMLFiltersRoundTripAndValidate(t *testing.T) {
 	}
 }
 
+// validConfig returns the smallest valid configuration used by validation tests.
 func validConfig() Config {
 	return Config{
 		Version:        Version,

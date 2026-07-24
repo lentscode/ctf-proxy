@@ -29,6 +29,7 @@ const (
 	MatchOperatorUnknown MatchOperator = iota
 	MatchOperatorExact
 	MatchOperatorContains
+	MatchOperatorNotContains
 	MatchOperatorPrefix
 	MatchOperatorSuffix
 	MatchOperatorRegex
@@ -36,11 +37,13 @@ const (
 
 const yamlVersion1 = 1
 
+// yamlConfiguration is the versioned top-level YAML filter document.
 type yamlConfiguration struct {
 	Version uint8      `yaml:"version"`
 	Filters []yamlRule `yaml:"filters"`
 }
 
+// yamlRule is one reject-only filter declaration from a YAML document.
 type yamlRule struct {
 	Name      string    `yaml:"name"`
 	Protocol  string    `yaml:"protocol"`
@@ -49,10 +52,12 @@ type yamlRule struct {
 	Match     yamlMatch `yaml:"match"`
 }
 
+// yamlMatch groups the conditions that must all match for a rule to reject.
 type yamlMatch struct {
 	All []yamlCondition `yaml:"all"`
 }
 
+// yamlCondition describes one field/operator/value comparison.
 type yamlCondition struct {
 	Field    string `yaml:"field"`
 	Header   string `yaml:"header"`
@@ -121,6 +126,7 @@ func LoadYAMLFiles(paths []string) ([]Filter, error) {
 	return filters, nil
 }
 
+// ensureSingleYAMLDocument rejects trailing YAML documents after the first one.
 func ensureSingleYAMLDocument(decoder *yaml.Decoder) error {
 	var extra yaml.Node
 	err := decoder.Decode(&extra)
@@ -133,12 +139,14 @@ func ensureSingleYAMLDocument(decoder *yaml.Decoder) error {
 	return fmt.Errorf("YAML filter file must contain exactly one document")
 }
 
+// compiledYAMLRule is an immutable, executable YAML filter.
 type compiledYAMLRule struct {
 	name         string
 	requirements Requirements
 	conditions   []compiledYAMLCondition
 }
 
+// compiledYAMLCondition stores parsed matching data for allocation-free evaluation.
 type compiledYAMLCondition struct {
 	field    MatchField
 	header   string
@@ -147,6 +155,7 @@ type compiledYAMLCondition struct {
 	regex    *regexp.Regexp
 }
 
+// compileYAMLRule validates one declaration and derives its filter requirements.
 func compileYAMLRule(rule yamlRule) (*compiledYAMLRule, error) {
 	if rule.Name == "" {
 		return nil, fmt.Errorf("name is required")
@@ -189,6 +198,7 @@ func compileYAMLRule(rule yamlRule) (*compiledYAMLRule, error) {
 	return compiled, nil
 }
 
+// compileYAMLCondition validates field compatibility and compiles regex operators.
 func compileYAMLCondition(protocol Protocol, direction Direction, condition yamlCondition) (compiledYAMLCondition, error) {
 	field, err := parseMatchField(condition.Field)
 	if err != nil {
@@ -227,6 +237,7 @@ func compileYAMLCondition(protocol Protocol, direction Direction, condition yaml
 	return compiled, nil
 }
 
+// parseYAMLProtocol converts a YAML protocol name to its contract value.
 func parseYAMLProtocol(value string) (Protocol, error) {
 	switch value {
 	case "tcp":
@@ -238,6 +249,7 @@ func parseYAMLProtocol(value string) (Protocol, error) {
 	}
 }
 
+// parseYAMLDirection converts a YAML direction name to its contract value.
 func parseYAMLDirection(value string) (Direction, error) {
 	switch value {
 	case "request":
@@ -249,6 +261,7 @@ func parseYAMLDirection(value string) (Direction, error) {
 	}
 }
 
+// parseMatchField converts a YAML field name to its matcher value.
 func parseMatchField(value string) (MatchField, error) {
 	switch value {
 	case "tcp.body":
@@ -264,12 +277,15 @@ func parseMatchField(value string) (MatchField, error) {
 	}
 }
 
+// parseMatchOperator converts a YAML operator name to its matcher value.
 func parseMatchOperator(value string) (MatchOperator, error) {
 	switch value {
 	case "exact":
 		return MatchOperatorExact, nil
 	case "contains":
 		return MatchOperatorContains, nil
+	case "not_contains":
+		return MatchOperatorNotContains, nil
 	case "prefix":
 		return MatchOperatorPrefix, nil
 	case "suffix":
@@ -281,6 +297,7 @@ func parseMatchOperator(value string) (MatchOperator, error) {
 	}
 }
 
+// isFieldSupportedByProtocol reports whether field belongs to protocol.
 func isFieldSupportedByProtocol(field MatchField, protocol Protocol) bool {
 	switch protocol {
 	case ProtocolTCP:
@@ -292,18 +309,22 @@ func isFieldSupportedByProtocol(field MatchField, protocol Protocol) bool {
 	}
 }
 
+// isFieldSupportedByDirection reports whether field is valid for direction.
 func isFieldSupportedByDirection(field MatchField, direction Direction) bool {
 	return field != MatchFieldHTTPPath || direction == DirectionRequest
 }
 
+// Name returns the stable name of the compiled YAML rule.
 func (r *compiledYAMLRule) Name() string {
 	return r.name
 }
 
+// Requirements returns the protocol, direction, and body-buffering needs of the rule.
 func (r *compiledYAMLRule) Requirements() Requirements {
 	return r.requirements
 }
 
+// Evaluate rejects when every compiled condition matches the message.
 func (r *compiledYAMLRule) Evaluate(_ context.Context, message Message) (Decision, error) {
 	for _, condition := range r.conditions {
 		if !condition.matches(message) {
@@ -314,6 +335,7 @@ func (r *compiledYAMLRule) Evaluate(_ context.Context, message Message) (Decisio
 	return Decision{Action: ActionReject, Filter: r.name, Reason: "YAML rule matched"}, nil
 }
 
+// matches evaluates a condition against the field selected from message.
 func (c compiledYAMLCondition) matches(message Message) bool {
 	switch c.field {
 	case MatchFieldTCPBody:
@@ -326,7 +348,19 @@ func (c compiledYAMLCondition) matches(message Message) bool {
 		if message.HTTP == nil {
 			return false
 		}
-		for _, value := range message.HTTP.Header.Values(c.header) {
+		values := message.HTTP.Header.Values(c.header)
+		if len(values) == 0 {
+			return false
+		}
+		if c.operator == MatchOperatorNotContains {
+			for _, value := range values {
+				if bytes.Contains([]byte(value), c.value) {
+					return false
+				}
+			}
+			return true
+		}
+		for _, value := range values {
 			if c.matchesValue([]byte(value)) {
 				return true
 			}
@@ -336,12 +370,15 @@ func (c compiledYAMLCondition) matches(message Message) bool {
 	return false
 }
 
+// matchesValue applies the condition's exact, substring, boundary, or regex operator.
 func (c compiledYAMLCondition) matchesValue(value []byte) bool {
 	switch c.operator {
 	case MatchOperatorExact:
 		return bytes.Equal(value, c.value)
 	case MatchOperatorContains:
 		return bytes.Contains(value, c.value)
+	case MatchOperatorNotContains:
+		return !bytes.Contains(value, c.value)
 	case MatchOperatorPrefix:
 		return bytes.HasPrefix(value, c.value)
 	case MatchOperatorSuffix:

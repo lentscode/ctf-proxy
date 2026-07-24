@@ -10,11 +10,13 @@ func FilterSink(reporter Reporter, proxyName string) filter.EventSink {
 	return filterSink{reporter: reporter, proxy: proxyName}
 }
 
+// filterSink carries filter failures and rejections into the observer pipeline.
 type filterSink struct {
 	reporter Reporter
 	proxy    string
 }
 
+// TryReport maps only known filter events to sanitized operational metadata.
 func (s filterSink) TryReport(event filter.Event) {
 	result := Event{Component: ComponentFilter, Proxy: s.proxy, Filter: event.Filter, Protocol: protocol(event.Protocol), Direction: direction(event.Direction)}
 	switch event.Kind {
@@ -32,6 +34,7 @@ func (s filterSink) TryReport(event filter.Event) {
 	s.reporter.Report(result)
 }
 
+// protocol converts an internal protocol identifier to its API spelling.
 func protocol(value filter.Protocol) string {
 	if value == filter.ProtocolTCP {
 		return "tcp"
@@ -42,6 +45,7 @@ func protocol(value filter.Protocol) string {
 	return ""
 }
 
+// direction converts an internal direction identifier to its API spelling.
 func direction(value filter.Direction) string {
 	if value == filter.DirectionRequest {
 		return "request"

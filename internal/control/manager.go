@@ -20,8 +20,11 @@ import (
 const defaultMaxConnections = 128
 
 var (
-	ErrNotFound    = errors.New("proxy not found")
-	ErrConflict    = errors.New("proxy listener conflict")
+	// ErrNotFound indicates that the requested proxy or managed filter is absent.
+	ErrNotFound = errors.New("proxy not found")
+	// ErrConflict indicates that a requested listener or name conflicts with existing state.
+	ErrConflict = errors.New("proxy listener conflict")
+	// ErrPersistence indicates that durable configuration could not be updated.
 	ErrPersistence = errors.New("configuration persistence failed")
 )
 
@@ -62,6 +65,7 @@ type ManagedFilterView struct {
 	AssignedProxies []string `json:"assigned_proxies"`
 }
 
+// filterCatalog combines compiled filters with their API metadata and sources.
 type filterCatalog struct {
 	registry *filter.Registry
 	views    []FilterView
@@ -69,6 +73,7 @@ type filterCatalog struct {
 	managed  map[string]config.ManagedYAMLFilter
 }
 
+// managedProxy tracks one running data-plane runner and its shutdown channel.
 type managedProxy struct {
 	definition config.Proxy
 	cancel     context.CancelFunc
@@ -147,6 +152,7 @@ func (m *Manager) Close() {
 	}
 }
 
+// List returns API views for all configured proxies in configuration order.
 func (m *Manager) List() []ProxyView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -158,6 +164,7 @@ func (m *Manager) List() []ProxyView {
 	return views
 }
 
+// Get returns the API view for one configured proxy.
 func (m *Manager) Get(name string) (ProxyView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -168,6 +175,7 @@ func (m *Manager) Get(name string) (ProxyView, error) {
 	return m.viewLocked(definition), nil
 }
 
+// ListFilters returns metadata for every available filter.
 func (m *Manager) ListFilters() []FilterView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,6 +184,7 @@ func (m *Manager) ListFilters() []FilterView {
 	return views
 }
 
+// GetManagedFilter returns one editable YAML filter and its assignments.
 func (m *Manager) GetManagedFilter(name string) (ManagedFilterView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -187,6 +196,7 @@ func (m *Manager) GetManagedFilter(name string) (ManagedFilterView, error) {
 	return ManagedFilterView{FilterView: view, YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}, nil
 }
 
+// ListProxyFilters returns the available filter metadata assigned to a proxy.
 func (m *Manager) ListProxyFilters(name string) ([]FilterView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -203,6 +213,7 @@ func (m *Manager) ListProxyFilters(name string) ([]FilterView, error) {
 	return views, nil
 }
 
+// CreateManagedFilter compiles, persists, and assigns a new YAML filter.
 func (m *Manager) CreateManagedFilter(proxyName, source string) (ManagedFilterView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -228,6 +239,7 @@ func (m *Manager) CreateManagedFilter(proxyName, source string) (ManagedFilterVi
 	return m.managedViewLocked(name), nil
 }
 
+// ReplaceManagedFilter validates and atomically replaces an editable YAML filter.
 func (m *Manager) ReplaceManagedFilter(name, source string) (ManagedFilterView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -251,6 +263,7 @@ func (m *Manager) ReplaceManagedFilter(name, source string) (ManagedFilterView, 
 	return m.managedViewLocked(name), nil
 }
 
+// DeleteManagedFilter removes an unassigned editable YAML filter.
 func (m *Manager) DeleteManagedFilter(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -270,6 +283,7 @@ func (m *Manager) DeleteManagedFilter(name string) error {
 	return nil
 }
 
+// Create validates, persists, and starts a new proxy definition.
 func (m *Manager) Create(definition config.Proxy) (ProxyView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -285,6 +299,7 @@ func (m *Manager) Create(definition config.Proxy) (ProxyView, error) {
 	return m.viewLocked(definition), nil
 }
 
+// Replace validates, persists, and reconciles an existing proxy definition.
 func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -302,6 +317,7 @@ func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, erro
 	return m.viewLocked(definition), nil
 }
 
+// Delete removes a proxy definition and stops its runner.
 func (m *Manager) Delete(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -318,6 +334,7 @@ func (m *Manager) Delete(name string) error {
 	return err
 }
 
+// SetActive changes a proxy's persisted activation state and runner lifecycle.
 func (m *Manager) SetActive(name string, active bool) (ProxyView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -339,6 +356,7 @@ func (m *Manager) SetActive(name string, active bool) (ProxyView, error) {
 	return m.viewLocked(next.Proxies[index]), nil
 }
 
+// applyLocked validates a complete next configuration before committing it.
 func (m *Manager) applyLocked(next config.Config) error {
 	if err := next.Validate(); err != nil {
 		return err
@@ -399,6 +417,7 @@ func (m *Manager) applyLocked(next config.Config) error {
 	return nil
 }
 
+// restoreLocked attempts to restart runners stopped during a failed update.
 func (m *Manager) restoreLocked(definitions []config.Proxy, catalog *filterCatalog, maxConnections int) {
 	for _, definition := range definitions {
 		if err := m.startLocked(definition, catalog, maxConnections); err != nil {
@@ -408,6 +427,7 @@ func (m *Manager) restoreLocked(definitions []config.Proxy, catalog *filterCatal
 	}
 }
 
+// startLocked binds and tracks one active proxy runner.
 func (m *Manager) startLocked(definition config.Proxy, catalog *filterCatalog, maxConnections int) error {
 	runner, err := m.runnerFor(definition, catalog, maxConnections)
 	if err != nil {
@@ -438,6 +458,7 @@ func (m *Manager) startLocked(definition config.Proxy, catalog *filterCatalog, m
 	return nil
 }
 
+// stopLocked cancels one runner and waits for its serve loop to finish.
 func (m *Manager) stopLocked(name string) {
 	current, exists := m.running[name]
 	if !exists {
@@ -448,12 +469,14 @@ func (m *Manager) stopLocked(name string) {
 	<-current.done
 }
 
+// stopAllLocked stops every currently tracked runner.
 func (m *Manager) stopAllLocked() {
 	for name := range m.running {
 		m.stopLocked(name)
 	}
 }
 
+// runnerFor builds a protocol-specific runner and immutable filter chain.
 func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, maxConnections int) (proxy.Runner, error) {
 	filters, err := catalog.registry.Build(definition.Filters)
 	if err != nil {
@@ -477,6 +500,7 @@ func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, max
 	}
 }
 
+// reportControlFailure emits a sanitized event for a rejected management change.
 func (m *Manager) reportControlFailure(err error) {
 	kind, message := observe.KindControlConfigurationRejected, "configuration update rejected"
 	if errors.Is(err, ErrPersistence) {
@@ -485,6 +509,7 @@ func (m *Manager) reportControlFailure(err error) {
 	m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentControl, Kind: kind, Message: message})
 }
 
+// viewLocked combines persisted definition and in-memory runner state.
 func (m *Manager) viewLocked(definition config.Proxy) ProxyView {
 	state := m.states[definition.Name]
 	if !definition.Active {
@@ -495,6 +520,7 @@ func (m *Manager) viewLocked(definition config.Proxy) ProxyView {
 	return ProxyView{Name: definition.Name, Active: definition.Active, Protocol: definition.Protocol, Listen: definition.Listen, Upstream: definition.Upstream, Filters: append([]string{}, definition.Filters...), State: state}
 }
 
+// findProxy locates a proxy definition by its stable name.
 func findProxy(cfg config.Config, name string) (config.Proxy, bool) {
 	for _, definition := range cfg.Proxies {
 		if definition.Name == name {
@@ -504,6 +530,7 @@ func findProxy(cfg config.Config, name string) (config.Proxy, bool) {
 	return config.Proxy{}, false
 }
 
+// proxyIndex returns a proxy's configuration index or -1 when absent.
 func proxyIndex(cfg config.Config, name string) int {
 	for i, definition := range cfg.Proxies {
 		if definition.Name == name {
@@ -513,6 +540,7 @@ func proxyIndex(cfg config.Config, name string) int {
 	return -1
 }
 
+// managedFilterIndex returns a managed filter's configuration index or -1.
 func managedFilterIndex(cfg config.Config, name string) int {
 	for i, definition := range cfg.ManagedYAMLFilters {
 		if definition.Name == name {
@@ -522,6 +550,7 @@ func managedFilterIndex(cfg config.Config, name string) int {
 	return -1
 }
 
+// assignedProxies lists proxies that reference filterName.
 func assignedProxies(cfg config.Config, filterName string) []string {
 	assigned := make([]string, 0)
 	for _, definition := range cfg.Proxies {
@@ -535,6 +564,7 @@ func assignedProxies(cfg config.Config, filterName string) []string {
 	return assigned
 }
 
+// referencesAny reports whether a proxy uses one of the changed filter names.
 func referencesAny(definition config.Proxy, names map[string]struct{}) bool {
 	for _, name := range definition.Filters {
 		if _, exists := names[name]; exists {
@@ -544,6 +574,7 @@ func referencesAny(definition config.Proxy, names map[string]struct{}) bool {
 	return false
 }
 
+// changedManagedFilters returns names whose YAML source differs between configs.
 func changedManagedFilters(previous, next config.Config) map[string]struct{} {
 	previousByName := make(map[string]string, len(previous.ManagedYAMLFilters))
 	for _, current := range previous.ManagedYAMLFilters {
@@ -567,6 +598,7 @@ func changedManagedFilters(previous, next config.Config) map[string]struct{} {
 	return changed
 }
 
+// singleYAMLFilter compiles exactly one managed YAML filter document.
 func singleYAMLFilter(source string) (filter.Filter, error) {
 	if strings.TrimSpace(source) == "" {
 		return nil, errors.New("YAML is required")
@@ -581,11 +613,13 @@ func singleYAMLFilter(source string) (filter.Filter, error) {
 	return compiled[0], nil
 }
 
+// managedViewLocked builds the API representation for a managed filter.
 func (m *Manager) managedViewLocked(name string) ManagedFilterView {
 	managed := m.catalog.managed[name]
 	return ManagedFilterView{FilterView: m.catalog.byName[name], YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}
 }
 
+// catalogFor builds the filter registry and metadata for a complete config.
 func (m *Manager) catalogFor(cfg config.Config) (*filterCatalog, error) {
 	registry := filter.NewRegistry()
 	if err := filter.RegisterBuiltins(registry); err != nil {
@@ -644,6 +678,7 @@ func (m *Manager) catalogFor(cfg config.Config) (*filterCatalog, error) {
 	return catalog, nil
 }
 
+// describeFilter converts filter requirements into dashboard metadata.
 func describeFilter(current filter.Filter, source string) FilterView {
 	requirements := current.Requirements()
 	view := FilterView{Name: current.Name(), Source: source, NeedsHTTPBody: requirements.NeedsHTTPBody}

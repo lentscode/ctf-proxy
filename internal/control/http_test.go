@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAPIStartsEmptyAndManagesInactiveProxy covers first-run API lifecycle operations.
 func TestAPIStartsEmptyAndManagesInactiveProxy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -59,6 +60,7 @@ func TestAPIStartsEmptyAndManagesInactiveProxy(t *testing.T) {
 	require.Contains(t, string(data), "proxies: []")
 }
 
+// TestAPIRejectsUnknownFilterWithoutPersisting protects validation before persistence.
 func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -76,6 +78,7 @@ func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	require.Empty(t, store.Snapshot().Proxies)
 }
 
+// TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion covers managed filter ownership.
 func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -131,6 +134,7 @@ func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	require.Empty(t, store.Snapshot().ManagedYAMLFilters)
 }
 
+// TestAPIManagedYAMLFilterValidation covers managed YAML shape and name validation.
 func TestAPIManagedYAMLFilterValidation(t *testing.T) {
 	for _, testCase := range []struct {
 		name       string
@@ -190,6 +194,7 @@ func TestAPIManagedYAMLFilterValidation(t *testing.T) {
 	}
 }
 
+// newFilterAPITestServer constructs an authenticated API with an empty filter catalog.
 func newFilterAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
@@ -205,6 +210,7 @@ func newFilterAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 	return store, handler
 }
 
+// arrangeManagedFilter returns a test setup that creates one managed filter.
 func arrangeManagedFilter(name string) func(t *testing.T, handler http.Handler) {
 	return func(t *testing.T, handler http.Handler) {
 		t.Helper()
@@ -213,6 +219,7 @@ func arrangeManagedFilter(name string) func(t *testing.T, handler http.Handler) 
 	}
 }
 
+// serveAPI invokes an API handler with the test authentication header.
 func serveAPI(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer test-token")
@@ -221,15 +228,18 @@ func serveAPI(handler http.Handler, method, path, body string) *httptest.Respons
 	return response
 }
 
+// jsonString encodes a test string as a JSON string literal.
 func jsonString(value string) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }
 
+// yamlFilterDocument returns a minimal request-path rejection rule.
 func yamlFilterDocument(name, path string) string {
 	return "version: 1\nfilters:\n  - name: " + name + "\n    protocol: http\n    direction: request\n    action: reject\n    match:\n      all:\n        - field: http.path\n          operator: prefix\n          value: " + path + "\n"
 }
 
+// TestAPIReportsListenerConflict maps bind failures to conflict responses.
 func TestAPIReportsListenerConflict(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -252,6 +262,7 @@ func TestAPIReportsListenerConflict(t *testing.T) {
 	require.Empty(t, store.Snapshot().Proxies)
 }
 
+// TestListenLoopback verifies that control listeners remain loopback-bound.
 func TestListenLoopback(t *testing.T) {
 	listener, err := ListenLoopback("127.0.0.1:0")
 	require.NoError(t, err)
@@ -260,6 +271,7 @@ func TestListenLoopback(t *testing.T) {
 	require.ErrorContains(t, err, "loopback")
 }
 
+// TestAPIRequiresValidBearerToken covers missing, malformed, and valid credentials.
 func TestAPIRequiresValidBearerToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -286,6 +298,7 @@ func TestAPIRequiresValidBearerToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 }
 
+// TestTokenFileRoundTrip verifies token persistence and restrictive permissions.
 func TestTokenFileRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens")
 	token, err := GenerateToken()
@@ -301,6 +314,7 @@ func TestTokenFileRoundTrip(t *testing.T) {
 	require.Equal(t, []string{token}, tokens)
 }
 
+// TestAPIEventsSnapshotRequiresAuthAndDoesNotConsume covers retained event reads.
 func TestAPIEventsSnapshotRequiresAuthAndDoesNotConsume(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -340,6 +354,7 @@ func TestAPIEventsSnapshotRequiresAuthAndDoesNotConsume(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 }
 
+// TestAPIProxyRoutesSupportRetrievalReplacementAndActivation covers proxy route mutations.
 func TestAPIProxyRoutesSupportRetrievalReplacementAndActivation(t *testing.T) {
 	store, handler := newControlAPITestServer(t)
 	listen := unusedTCPAddress(t)
@@ -380,6 +395,7 @@ func TestAPIProxyRoutesSupportRetrievalReplacementAndActivation(t *testing.T) {
 	require.False(t, store.Snapshot().Proxies[0].Active)
 }
 
+// TestAPIRouteAndMethodValidation covers unknown routes and unsupported methods.
 func TestAPIRouteAndMethodValidation(t *testing.T) {
 	_, handler := newControlAPITestServer(t)
 
@@ -416,6 +432,7 @@ func TestAPIRouteAndMethodValidation(t *testing.T) {
 	require.JSONEq(t, `{"filters":[]}`, response.Body.String())
 }
 
+// TestAPIEventsValidatesLimitAndWorksWithoutEventHub covers bounded event queries.
 func TestAPIEventsValidatesLimitAndWorksWithoutEventHub(t *testing.T) {
 	_, handler := newControlAPITestServer(t)
 
@@ -435,6 +452,7 @@ func TestAPIEventsValidatesLimitAndWorksWithoutEventHub(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
 }
 
+// newControlAPITestServer constructs a fully wired authenticated control API.
 func newControlAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
@@ -447,6 +465,7 @@ func newControlAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 	return store, NewHandler(manager, []string{"test-token"})
 }
 
+// unusedTCPAddress reserves and releases a local TCP port for conflict tests.
 func unusedTCPAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -456,6 +475,7 @@ func unusedTCPAddress(t *testing.T) string {
 	return address
 }
 
+// TestAPIEventStreamDeliversNewEvents verifies live SSE delivery and cleanup.
 func TestAPIEventStreamDeliversNewEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)

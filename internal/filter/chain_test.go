@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestChainEvaluatesEligibleFiltersInOrder protects ordered short-circuit evaluation.
 func TestChainEvaluatesEligibleFiltersInOrder(t *testing.T) {
 	var calls []string
 	chain, err := NewChain(
@@ -37,6 +38,7 @@ func TestChainEvaluatesEligibleFiltersInOrder(t *testing.T) {
 	assert.Equal(t, []string{"allow", "reject"}, calls)
 }
 
+// TestChainFilterFailuresFailOpen covers errors, invalid decisions, and panics.
 func TestChainFilterFailuresFailOpen(t *testing.T) {
 	events := &recordingEventSink{}
 	chain, err := NewChainWithEventSink(events,
@@ -55,6 +57,7 @@ func TestChainFilterFailuresFailOpen(t *testing.T) {
 	}, events.events)
 }
 
+// TestChainReportsRejection verifies rejection metadata reaches the event sink.
 func TestChainReportsRejection(t *testing.T) {
 	events := &recordingEventSink{}
 	chain, err := NewChainWithEventSink(events, testFilter{name: "reject", evaluate: func(Message) (Decision, error) {
@@ -70,6 +73,7 @@ func TestChainReportsRejection(t *testing.T) {
 	}}, events.events)
 }
 
+// TestChainNeedsHTTPBodyOnlyForEligibleDirection protects body-buffering eligibility.
 func TestChainNeedsHTTPBodyOnlyForEligibleDirection(t *testing.T) {
 	chain, err := NewChain(testFilter{name: "body", requirements: Requirements{
 		Protocols:     []Protocol{ProtocolHTTP},
@@ -82,6 +86,7 @@ func TestChainNeedsHTTPBodyOnlyForEligibleDirection(t *testing.T) {
 	assert.True(t, chain.NeedsHTTPBody(DirectionResponse))
 }
 
+// TestNewChainRejectsInvalidFilters covers chain contract validation.
 func TestNewChainRejectsInvalidFilters(t *testing.T) {
 	for _, testCase := range []struct {
 		name    string
@@ -97,22 +102,30 @@ func TestNewChainRejectsInvalidFilters(t *testing.T) {
 	}
 }
 
+// testFilter is a configurable filter double for chain tests.
 type testFilter struct {
 	name         string
 	requirements Requirements
 	evaluate     func(Message) (Decision, error)
 }
 
+// recordingEventSink captures non-blocking chain events for assertions.
 type recordingEventSink struct {
 	events []Event
 }
 
+// TryReport records one event in the test sink.
 func (s *recordingEventSink) TryReport(event Event) {
 	s.events = append(s.events, event)
 }
 
-func (f testFilter) Name() string               { return f.name }
+// Name returns the configured test filter name.
+func (f testFilter) Name() string { return f.name }
+
+// Requirements returns the configured test filter requirements.
 func (f testFilter) Requirements() Requirements { return f.requirements }
+
+// Evaluate returns the configured decision and optionally records the message.
 func (f testFilter) Evaluate(_ context.Context, message Message) (Decision, error) {
 	if f.evaluate == nil {
 		return Decision{Action: ActionAllow}, nil

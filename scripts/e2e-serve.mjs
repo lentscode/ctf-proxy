@@ -15,14 +15,17 @@ const binaryPath = join(temporaryDirectory, 'ctf-proxy')
 let controlProcess
 let viteProcess
 
+// command starts a child process with inherited terminal output.
 function command(name, args, options = {}) {
   return spawn(name, args, { stdio: 'inherit', ...options })
 }
 
+// waitForExit resolves with a child process's exit code.
 function waitForExit(child) {
   return new Promise((resolve) => child.once('exit', resolve))
 }
 
+// stop asks a child to exit cleanly, then applies a hard timeout fallback.
 async function stop(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return
   child.kill('SIGTERM')
@@ -30,10 +33,12 @@ async function stop(child) {
   if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
 }
 
+// delay creates a timer promise for polling and shutdown waits.
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+// waitForControl polls the authenticated health endpoint until startup completes.
 async function waitForControl() {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
@@ -53,6 +58,7 @@ async function waitForControl() {
   throw new Error('timed out waiting for the ctf-proxy control API')
 }
 
+// cleanup stops both development servers and removes their temporary state.
 async function cleanup() {
   await Promise.all([stop(viteProcess), stop(controlProcess)])
   await rm(temporaryDirectory, { recursive: true, force: true })

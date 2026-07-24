@@ -4,6 +4,7 @@ import { AppShell } from './AppShell'
 import { isUnauthorized, verifyHealth } from '../lib/api'
 import { clearAuthToken, getAuthToken, saveAuthToken } from '../lib/auth'
 
+// App owns the token handshake and switches between authentication and the dashboard.
 function App() {
   const [token, setToken] = useState(() => getAuthToken())
   const [authenticated, setAuthenticated] = useState(false)
@@ -11,6 +12,7 @@ function App() {
   const [authError, setAuthError] = useState<string | undefined>()
   const initialToken = useRef(getAuthToken())
 
+  // disconnect clears local credentials after an API rejects the current token.
   const disconnect = useCallback(() => {
     clearAuthToken()
     setToken('')
@@ -19,6 +21,7 @@ function App() {
     setAuthError('Token was not accepted.')
   }, [])
 
+  // connect persists a candidate token only after using it to verify the API.
   const connect = useCallback(async (candidate: string) => {
     const nextToken = candidate.trim()
     if (!nextToken) {

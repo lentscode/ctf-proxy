@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestFanoutReporterIsolatesPanics protects observer isolation guarantees.
 func TestFanoutReporterIsolatesPanics(t *testing.T) {
 	var received int
 	reporter := NewFanoutReporter(panicReporter{}, ReporterFunc(func(Event) { received++ }))
@@ -20,6 +21,7 @@ func TestFanoutReporterIsolatesPanics(t *testing.T) {
 	assert.Equal(t, 1, received)
 }
 
+// TestFilterSinkMapsOnlySafeMetadata verifies filter events omit traffic details.
 func TestFilterSinkMapsOnlySafeMetadata(t *testing.T) {
 	var received Event
 	sink := FilterSink(ReporterFunc(func(event Event) { received = event }), "web")
@@ -30,6 +32,7 @@ func TestFilterSinkMapsOnlySafeMetadata(t *testing.T) {
 	}, received)
 }
 
+// TestSanitizeMessageBoundsAndFlattens covers safe event message normalization.
 func TestSanitizeMessageBoundsAndFlattens(t *testing.T) {
 	message := SanitizeMessage("line one\nline two\x00" + strings.Repeat("x", 300))
 	assert.NotContains(t, message, "\n")
@@ -37,6 +40,7 @@ func TestSanitizeMessageBoundsAndFlattens(t *testing.T) {
 	assert.LessOrEqual(t, len(message), maxMessageBytes)
 }
 
+// TestObserverAssignsEventIdentityBeforeDelivery protects shared event enrichment.
 func TestObserverAssignsEventIdentityBeforeDelivery(t *testing.T) {
 	observer := NewObserver(io.Discard)
 	t.Cleanup(observer.Close)
@@ -48,6 +52,7 @@ func TestObserverAssignsEventIdentityBeforeDelivery(t *testing.T) {
 	assert.Equal(t, "one two", events[0].Message)
 }
 
+// TestSlogReporterWritesStructuredJSON verifies asynchronous structured logging.
 func TestSlogReporterWritesStructuredJSON(t *testing.T) {
 	var output bytes.Buffer
 	reporter := NewSlogReporter(&output)
@@ -61,6 +66,7 @@ func TestSlogReporterWritesStructuredJSON(t *testing.T) {
 	assert.NotContains(t, record, "filter")
 }
 
+// TestSlogReporterDropsWhenBlockedWithoutBlockingCaller protects bounded logging.
 func TestSlogReporterDropsWhenBlockedWithoutBlockingCaller(t *testing.T) {
 	writer := &blockingWriter{entered: make(chan struct{}), release: make(chan struct{})}
 	reporter := NewSlogReporter(writer)
@@ -76,20 +82,25 @@ func TestSlogReporterDropsWhenBlockedWithoutBlockingCaller(t *testing.T) {
 	reporter.Close()
 }
 
+// panicReporter is an observer double that intentionally panics.
 type panicReporter struct{}
 
+// Report panics to verify fanout isolation.
 func (panicReporter) Report(Event) { panic("observer failed") }
 
-// ReporterFunc adapts a function for concise observer tests and callers.
+// ReporterFunc adapts a function to the Reporter interface.
 type ReporterFunc func(Event)
 
+// Report invokes the adapted reporter function.
 func (f ReporterFunc) Report(event Event) { f(event) }
 
+// blockingWriter blocks writes until released by a test.
 type blockingWriter struct {
 	entered chan struct{}
 	release chan struct{}
 }
 
+// Write waits for release and then reports that all bytes were written.
 func (w *blockingWriter) Write(data []byte) (int, error) {
 	select {
 	case <-w.entered:

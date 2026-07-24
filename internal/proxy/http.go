@@ -35,6 +35,7 @@ type HTTPProxy struct {
 	reporter  observe.Reporter
 }
 
+// NewHTTPProxy constructs an HTTP runner with a shared request budget and filter chain.
 func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *HTTPProxy {
 	var reporter observe.Reporter
 	if len(reporters) > 0 {
@@ -52,6 +53,7 @@ func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *
 	}
 }
 
+// Start binds the configured address and serves HTTP until stopped.
 func (p *HTTPProxy) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", p.listenAddr)
 	if err != nil {
@@ -66,6 +68,7 @@ func (p *HTTPProxy) Serve(ctx context.Context, listener net.Listener) error {
 	return p.serve(ctx, listener)
 }
 
+// serve validates the upstream and runs the bounded HTTP server lifecycle.
 func (p *HTTPProxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 
@@ -127,6 +130,7 @@ func (p *HTTPProxy) serve(ctx context.Context, listener net.Listener) error {
 	return err
 }
 
+// ServeHTTP filters and forwards one request, then filters the upstream response.
 func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.acquireSlot() {
 		http.Error(w, "proxy is busy", http.StatusServiceUnavailable)
@@ -189,6 +193,7 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// requestFilterMessage builds the request view and buffers its body when required.
 func (p *HTTPProxy) requestFilterMessage(r *http.Request) (filter.Message, error) {
 	message := filter.Message{
 		Protocol:  filter.ProtocolHTTP,
@@ -213,6 +218,7 @@ func (p *HTTPProxy) requestFilterMessage(r *http.Request) (filter.Message, error
 	return message, nil
 }
 
+// responseFilterMessage builds the response view and buffers its body when required.
 func (p *HTTPProxy) responseFilterMessage(res *http.Response) (filter.Message, error) {
 	message := filter.Message{
 		Protocol:  filter.ProtocolHTTP,
@@ -236,6 +242,7 @@ func (p *HTTPProxy) responseFilterMessage(res *http.Response) (filter.Message, e
 	return message, nil
 }
 
+// inspectHTTPBody reads the bounded inspection prefix and restores the full stream.
 func inspectHTTPBody(body io.ReadCloser) ([]byte, bool, io.ReadCloser, error) {
 	data, err := io.ReadAll(io.LimitReader(body, DefaultMaxFilterBodyBytes+1))
 	if err != nil {
@@ -254,21 +261,25 @@ func inspectHTTPBody(body io.ReadCloser) ([]byte, bool, io.ReadCloser, error) {
 	}, nil
 }
 
+// prefixedReadCloser replays an inspected prefix before continuing with the source.
 type prefixedReadCloser struct {
 	io.Reader
 	closer io.Closer
 }
 
+// Close closes the original body after the prefixed reader has been consumed.
 func (r *prefixedReadCloser) Close() error {
 	return r.closer.Close()
 }
 
+// writeFilterRejection returns the protocol-independent HTTP rejection response.
 func writeFilterRejection(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = io.WriteString(w, "request rejected by proxy")
 }
 
+// acquireSlot claims one request slot without waiting for capacity.
 func (p *HTTPProxy) acquireSlot() bool {
 	if p.slots == nil {
 		return true
@@ -282,12 +293,14 @@ func (p *HTTPProxy) acquireSlot() bool {
 	}
 }
 
+// releaseSlot returns a previously claimed request slot.
 func (p *HTTPProxy) releaseSlot() {
 	if p.slots != nil {
 		<-p.slots
 	}
 }
 
+// removeHopByHopHeaders strips headers that describe one transport connection.
 func removeHopByHopHeaders(h http.Header) {
 	// Connection may nominate extra header names that must not be forwarded.
 	for _, value := range h.Values("Connection") {

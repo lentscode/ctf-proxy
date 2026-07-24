@@ -3,8 +3,10 @@ import { authenticatedFetch } from './auth'
 import { z } from 'zod'
 
 export const streamStatusSchema = z.enum(['connecting', 'live', 'reconnecting', 'disconnected'])
+// StreamStatus is the finite set of connection states shown by the dashboard.
 export type StreamStatus = z.infer<typeof streamStatusSchema>
 
+// EventStreamOptions defines callbacks for validated events and connection state.
 interface EventStreamOptions {
   onEvent: (event: ObserveEvent) => void
   onConnected: () => void
@@ -12,12 +14,14 @@ interface EventStreamOptions {
   onUnauthorized: () => void
 }
 
+// subscribeToEventStream opens an authenticated SSE stream and returns its cleanup function.
 export function subscribeToEventStream(options: EventStreamOptions): () => void {
   let active = true
   let retryCount = 0
   let controller: AbortController | undefined
   let retryTimer: ReturnType<typeof setTimeout> | undefined
 
+  // scheduleReconnect applies bounded exponential backoff after a stream failure.
   const scheduleReconnect = () => {
     if (!active) return
     retryCount += 1
@@ -26,6 +30,7 @@ export function subscribeToEventStream(options: EventStreamOptions): () => void 
     retryTimer = setTimeout(() => void connect(), delay)
   }
 
+  // connect owns one stream attempt and hands validated payloads to the caller.
   const connect = async () => {
     controller = new AbortController()
     options.onStatus(retryCount === 0 ? 'connecting' : 'reconnecting')
@@ -59,6 +64,7 @@ export function subscribeToEventStream(options: EventStreamOptions): () => void 
   }
 }
 
+// readSSE parses event/data records from a streaming response without rendering raw input.
 async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (event: ObserveEvent) => void): Promise<void> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -66,6 +72,7 @@ async function readSSE(body: ReadableStream<Uint8Array>, onEvent: (event: Observ
   let eventType = ''
   let data: string[] = []
 
+  // dispatch validates one complete observe record and ignores malformed payloads.
   const dispatch = () => {
     if (eventType === 'observe' && data.length > 0) {
       try {

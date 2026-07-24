@@ -26,6 +26,7 @@ type TCPProxy struct {
 	reporter observe.Reporter
 }
 
+// NewTCPProxy constructs a TCP runner with a shared connection budget and filter chain.
 func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *TCPProxy {
 	var reporter observe.Reporter
 	if len(reporters) > 0 {
@@ -43,6 +44,7 @@ func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *
 	}
 }
 
+// Start binds the configured address and serves TCP connections until stopped.
 func (p *TCPProxy) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", p.listenAddr)
 	if err != nil {
@@ -57,6 +59,7 @@ func (p *TCPProxy) Serve(ctx context.Context, listener net.Listener) error {
 	return p.serve(ctx, listener)
 }
 
+// serve accepts clients, enforces the connection budget, and watches ctx.
 func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 	defer listener.Close()
 
@@ -86,6 +89,7 @@ func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 	}
 }
 
+// forward connects one client to the upstream and copies both directions.
 func (p *TCPProxy) forward(client net.Conn) error {
 	defer client.Close()
 
@@ -144,6 +148,7 @@ func (p *TCPProxy) forward(client net.Conn) error {
 	return secondErr
 }
 
+// copy filters and forwards chunks in one direction, preserving half-close semantics.
 func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connection filter.ConnectionInfo) error {
 	buffer := make([]byte, tcpFilterBufferSize)
 	for {
@@ -172,6 +177,7 @@ func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connectio
 	}
 }
 
+// writeAll handles writers that accept only a prefix of the supplied data.
 func writeAll(dst io.Writer, data []byte) error {
 	for len(data) > 0 {
 		n, err := dst.Write(data)
@@ -186,6 +192,7 @@ func writeAll(dst io.Writer, data []byte) error {
 	return nil
 }
 
+// closeWrite half-closes a TCP connection when supported by its concrete type.
 func closeWrite(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		_ = tcpConn.CloseWrite()

@@ -3,12 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 import { getEvents, isUnauthorized, type ObserveEvent } from '../lib/api'
 import { subscribeToEventStream, type StreamStatus } from '../lib/event-stream'
 
+// EventStreamProps contains the session-expiry callback for the stream and history query.
 interface EventStreamProps {
   onUnauthorized: () => void
 }
 
 const maximumEvents = 100
 
+// mergeEvents deduplicates history and live events, keeping the newest bounded slice.
 function mergeEvents(...collections: ObserveEvent[][]): ObserveEvent[] {
   const unique = new Map<number, ObserveEvent>()
   for (const collection of collections) {
@@ -19,6 +21,7 @@ function mergeEvents(...collections: ObserveEvent[][]): ObserveEvent[] {
   return [...unique.values()].sort((left, right) => right.id - left.id).slice(0, maximumEvents)
 }
 
+// EventStream displays retained events and appends validated SSE events as they arrive.
 export function EventStream({ onUnauthorized }: EventStreamProps) {
   const { data: history, error, isError, isLoading, refetch } = useQuery({ queryKey: ['events'], queryFn: getEvents })
   const [liveEvents, setLiveEvents] = useState<ObserveEvent[]>([])
@@ -51,6 +54,7 @@ export function EventStream({ onUnauthorized }: EventStreamProps) {
     return unsubscribe
   }, [onUnauthorized, refetch])
 
+  // returnToNewest resets the scroll position after the user reads older events.
   function returnToNewest() {
     scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     setHasNewEvents(false)
@@ -82,6 +86,7 @@ export function EventStream({ onUnauthorized }: EventStreamProps) {
   )
 }
 
+// EventRow renders only structured, already-validated event fields.
 function EventRow({ event }: { event: ObserveEvent }) {
   const metadata = [event.component, event.kind, event.proxy, event.filter, event.protocol, event.direction].filter(Boolean)
   const timestamp = new Date(event.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -97,6 +102,7 @@ function EventRow({ event }: { event: ObserveEvent }) {
   )
 }
 
+// EventSkeleton reserves the event-list shape while the initial history loads.
 function EventSkeleton() {
   return <div className="grid gap-3 p-5" aria-label="Loading events">{Array.from({ length: 5 }, (_, index) => <span key={index} className="h-10 animate-pulse rounded bg-zinc-900" />)}</div>
 }

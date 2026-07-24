@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getProxies, isUnauthorized, type ProxyView } from '../lib/api'
 
+// ProxyTableProps contains the callback used when the list query is unauthorized.
 interface ProxyTableProps {
   onUnauthorized: () => void
 }
@@ -12,6 +13,7 @@ const stateLabels: Record<ProxyView['state'], string> = {
   failed: 'Failed',
 }
 
+// ProxyTable shows a compact, periodically refreshed proxy status table.
 export function ProxyTable({ onUnauthorized }: ProxyTableProps) {
   const proxies = useQuery({
     queryKey: ['proxies'],
@@ -60,6 +62,7 @@ export function ProxyTable({ onUnauthorized }: ProxyTableProps) {
   )
 }
 
+// ProxyRow renders one proxy's stable identity and current lifecycle state.
 function ProxyRow({ proxy }: { proxy: ProxyView }) {
   return (
     <tr className="border-b border-zinc-700 text-sm hover:bg-zinc-900">
@@ -71,6 +74,7 @@ function ProxyRow({ proxy }: { proxy: ProxyView }) {
   )
 }
 
+// ProxySkeleton provides a bounded placeholder while proxy data is loading.
 function ProxySkeleton() {
   return <div className="grid gap-px" aria-label="Loading proxies">{Array.from({ length: 5 }, (_, index) => <span key={index} className="h-14 animate-pulse bg-zinc-900" />)}</div>
 }
