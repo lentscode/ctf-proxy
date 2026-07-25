@@ -22,10 +22,28 @@ var _ http.Handler = &HTTPProxy{}
 // body-dependent filter.
 const DefaultMaxFilterBodyBytes int64 = 64 << 10
 
+// HTTPOptions controls the HTTP transport and server limits. Zero values use
+// the previous hard-coded defaults.
+type HTTPOptions struct {
+	DialTimeout               time.Duration
+	KeepAlive                 time.Duration
+	MaxIdleConnections        int
+	MaxIdleConnectionsPerHost int
+	MaxConnectionsPerHost     int
+	IdleConnectionTimeout     time.Duration
+	ResponseHeaderTimeout     time.Duration
+	ExpectContinueTimeout     time.Duration
+	ReadHeaderTimeout         time.Duration
+	IdleTimeout               time.Duration
+	MaxHeaderBytes            int
+	ShutdownTimeout           time.Duration
+}
+
 // HTTPProxy will forward HTTP requests to an upstream address.
 type HTTPProxy struct {
 	listenAddr  string
 	upstreamUrl string
+	options     HTTPOptions
 
 	slots chan struct{}
 
@@ -37,6 +55,11 @@ type HTTPProxy struct {
 
 // NewHTTPProxy constructs an HTTP runner with a shared request budget and filter chain.
 func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *HTTPProxy {
+	return NewHTTPProxyWithOptions(listenAddr, upstreamUrl, slots, filters, HTTPOptions{}, reporters...)
+}
+
+// NewHTTPProxyWithOptions constructs an HTTP runner with explicit transport and server options.
+func NewHTTPProxyWithOptions(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain, options HTTPOptions, reporters ...observe.Reporter) *HTTPProxy {
 	var reporter observe.Reporter
 	if len(reporters) > 0 {
 		reporter = reporters[0]
@@ -47,6 +70,7 @@ func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *
 	return &HTTPProxy{
 		listenAddr:  listenAddr,
 		upstreamUrl: upstreamUrl,
+		options:     options,
 		slots:       slots,
 		filters:     filters,
 		reporter:    reporter,
@@ -87,34 +111,15 @@ func (p *HTTPProxy) serve(ctx context.Context, listener net.Listener) error {
 	}
 
 	p.upstream = upstream
+	options := p.options.withDefaults()
 
-	//TODO(lentscode): replace with user defined values
-	p.transport = &http.Transport{
-		Proxy:                 nil,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   16,
-		MaxConnsPerHost:       64,
-		IdleConnTimeout:       30 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-
-		DialContext: (&net.Dialer{
-			Timeout:   3 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-	}
+	p.transport = newHTTPTransport(options)
 	defer p.transport.CloseIdleConnections()
 
-	//TODO(lentscode): replace with user defined values
-	server := &http.Server{
-		Handler:           p,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    1 << 20,
-	}
+	server := newHTTPServer(p, options)
 
 	stop := context.AfterFunc(ctx, func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), options.ShutdownTimeout)
 		defer cancel()
 
 		_ = server.Shutdown(shutdownCtx)
@@ -128,6 +133,71 @@ func (p *HTTPProxy) serve(ctx context.Context, listener net.Listener) error {
 	}
 
 	return err
+}
+
+func (o HTTPOptions) withDefaults() HTTPOptions {
+	if o.DialTimeout == 0 {
+		o.DialTimeout = 3 * time.Second
+	}
+	if o.KeepAlive == 0 {
+		o.KeepAlive = 30 * time.Second
+	}
+	if o.MaxIdleConnections == 0 {
+		o.MaxIdleConnections = 64
+	}
+	if o.MaxIdleConnectionsPerHost == 0 {
+		o.MaxIdleConnectionsPerHost = 16
+	}
+	if o.MaxConnectionsPerHost == 0 {
+		o.MaxConnectionsPerHost = 64
+	}
+	if o.IdleConnectionTimeout == 0 {
+		o.IdleConnectionTimeout = 30 * time.Second
+	}
+	if o.ResponseHeaderTimeout == 0 {
+		o.ResponseHeaderTimeout = 5 * time.Second
+	}
+	if o.ExpectContinueTimeout == 0 {
+		o.ExpectContinueTimeout = time.Second
+	}
+	if o.ReadHeaderTimeout == 0 {
+		o.ReadHeaderTimeout = 5 * time.Second
+	}
+	if o.IdleTimeout == 0 {
+		o.IdleTimeout = 60 * time.Second
+	}
+	if o.MaxHeaderBytes == 0 {
+		o.MaxHeaderBytes = 1 << 20
+	}
+	if o.ShutdownTimeout == 0 {
+		o.ShutdownTimeout = 5 * time.Second
+	}
+	return o
+}
+
+func newHTTPTransport(options HTTPOptions) *http.Transport {
+	return &http.Transport{
+		Proxy:                 nil,
+		MaxIdleConns:          options.MaxIdleConnections,
+		MaxIdleConnsPerHost:   options.MaxIdleConnectionsPerHost,
+		MaxConnsPerHost:       options.MaxConnectionsPerHost,
+		IdleConnTimeout:       options.IdleConnectionTimeout,
+		ResponseHeaderTimeout: options.ResponseHeaderTimeout,
+		ExpectContinueTimeout: options.ExpectContinueTimeout,
+		DialContext: (&net.Dialer{
+			Timeout:   options.DialTimeout,
+			KeepAlive: options.KeepAlive,
+		}).DialContext,
+	}
+}
+
+func newHTTPServer(handler http.Handler, options HTTPOptions) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: options.ReadHeaderTimeout,
+		IdleTimeout:       options.IdleTimeout,
+		MaxHeaderBytes:    options.MaxHeaderBytes,
+	}
 }
 
 // ServeHTTP filters and forwards one request, then filters the upstream response.

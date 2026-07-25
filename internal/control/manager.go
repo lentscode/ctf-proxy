@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/filter"
@@ -310,6 +311,14 @@ func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, erro
 		return ProxyView{}, ErrNotFound
 	}
 	definition.Name = name
+	previous := next.Proxies[index]
+	// Timeout settings are YAML-only for now, so dashboard/API edits to the
+	// same protocol must not silently discard them. A protocol switch drops
+	// settings because retaining the old protocol's block would be invalid.
+	if definition.Protocol == previous.Protocol {
+		definition.TCP = previous.TCP
+		definition.HTTP = previous.HTTP
+	}
 	next.Proxies[index] = definition
 	if err := m.applyLocked(next); err != nil {
 		m.reportControlFailure(err)
@@ -493,11 +502,42 @@ func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, max
 	slots := make(chan struct{}, maxConnections)
 	switch definition.Protocol {
 	case "tcp":
-		return proxy.NewTCPProxy(definition.Listen, definition.Upstream, slots, chain, observe.WithProxy(m.reporter, definition.Name)), nil
+		return proxy.NewTCPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, tcpOptions(definition), observe.WithProxy(m.reporter, definition.Name)), nil
 	case "http":
-		return proxy.NewHTTPProxy(definition.Listen, definition.Upstream, slots, chain, observe.WithProxy(m.reporter, definition.Name)), nil
+		return proxy.NewHTTPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, httpOptions(definition), observe.WithProxy(m.reporter, definition.Name)), nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", definition.Protocol)
+	}
+}
+
+func tcpOptions(definition config.Proxy) proxy.TCPOptions {
+	if definition.TCP == nil {
+		return proxy.TCPOptions{}
+	}
+	return proxy.TCPOptions{
+		DialTimeout:  time.Duration(definition.TCP.DialTimeout),
+		ReadTimeout:  time.Duration(definition.TCP.ReadTimeout),
+		WriteTimeout: time.Duration(definition.TCP.WriteTimeout),
+	}
+}
+
+func httpOptions(definition config.Proxy) proxy.HTTPOptions {
+	if definition.HTTP == nil {
+		return proxy.HTTPOptions{}
+	}
+	return proxy.HTTPOptions{
+		DialTimeout:               time.Duration(definition.HTTP.DialTimeout),
+		KeepAlive:                 time.Duration(definition.HTTP.KeepAlive),
+		MaxIdleConnections:        definition.HTTP.MaxIdleConnections,
+		MaxIdleConnectionsPerHost: definition.HTTP.MaxIdleConnectionsPerHost,
+		MaxConnectionsPerHost:     definition.HTTP.MaxConnectionsPerHost,
+		IdleConnectionTimeout:     time.Duration(definition.HTTP.IdleConnectionTimeout),
+		ResponseHeaderTimeout:     time.Duration(definition.HTTP.ResponseHeaderTimeout),
+		ExpectContinueTimeout:     time.Duration(definition.HTTP.ExpectContinueTimeout),
+		ReadHeaderTimeout:         time.Duration(definition.HTTP.ReadHeaderTimeout),
+		IdleTimeout:               time.Duration(definition.HTTP.IdleTimeout),
+		MaxHeaderBytes:            definition.HTTP.MaxHeaderBytes,
+		ShutdownTimeout:           time.Duration(definition.HTTP.ShutdownTimeout),
 	}
 }
 

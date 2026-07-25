@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
 	"github.com/lentscode/ctf-proxy/internal/observe"
@@ -15,10 +16,19 @@ const tcpFilterBufferSize = 32 << 10
 
 var errTCPFilterRejected = errors.New("TCP filter rejected traffic")
 
+// TCPOptions controls TCP connection establishment and per-operation deadlines.
+// Zero values preserve the previous unbounded behavior.
+type TCPOptions struct {
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
 // TCPProxy forwards raw TCP connections to an upstream address.
 type TCPProxy struct {
 	listenAddr   string
 	upstreamAddr string
+	options      TCPOptions
 
 	slots chan struct{}
 
@@ -28,6 +38,11 @@ type TCPProxy struct {
 
 // NewTCPProxy constructs a TCP runner with a shared connection budget and filter chain.
 func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *TCPProxy {
+	return NewTCPProxyWithOptions(listenAddr, upstreamAddr, slots, filters, TCPOptions{}, reporters...)
+}
+
+// NewTCPProxyWithOptions constructs a TCP runner with explicit deadline options.
+func NewTCPProxyWithOptions(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain, options TCPOptions, reporters ...observe.Reporter) *TCPProxy {
 	var reporter observe.Reporter
 	if len(reporters) > 0 {
 		reporter = reporters[0]
@@ -38,6 +53,7 @@ func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *
 	return &TCPProxy{
 		listenAddr:   listenAddr,
 		upstreamAddr: upstreamAddr,
+		options:      options,
 		slots:        slots,
 		filters:      filters,
 		reporter:     reporter,
@@ -93,8 +109,7 @@ func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 func (p *TCPProxy) forward(client net.Conn) error {
 	defer client.Close()
 
-	//TODO(lentscode): add timeout
-	upstream, err := net.Dial("tcp", p.upstreamAddr)
+	upstream, err := (&net.Dialer{Timeout: p.options.DialTimeout}).Dial("tcp", p.upstreamAddr)
 	if err != nil {
 		p.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyUpstreamUnavailable, Message: "TCP upstream unavailable"})
 		return err
@@ -152,6 +167,9 @@ func (p *TCPProxy) forward(client net.Conn) error {
 func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connection filter.ConnectionInfo) error {
 	buffer := make([]byte, tcpFilterBufferSize)
 	for {
+		if p.options.ReadTimeout > 0 {
+			_ = src.SetReadDeadline(time.Now().Add(p.options.ReadTimeout))
+		}
 		n, readErr := src.Read(buffer)
 		if n > 0 {
 			decision := p.filters.Evaluate(context.Background(), filter.Message{
@@ -162,6 +180,9 @@ func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connectio
 			})
 			if decision.Action == filter.ActionReject {
 				return errTCPFilterRejected
+			}
+			if p.options.WriteTimeout > 0 {
+				_ = dst.SetWriteDeadline(time.Now().Add(p.options.WriteTimeout))
 			}
 			if err := writeAll(dst, buffer[:n]); err != nil {
 				return err

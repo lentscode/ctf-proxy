@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,60 @@ proxies:
 	require.False(t, cfg.Proxies[0].Active)
 }
 
+// TestLoadProtocolSpecificProxySettings parses textual durations and keeps
+// each proxy protocol's settings separate.
+func TestLoadProtocolSpecificProxySettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+version: 1
+proxies:
+  - name: raw
+    protocol: tcp
+    listen: ":9000"
+    upstream: "127.0.0.1:9001"
+    tcp:
+      dial_timeout: 3s
+      read_timeout: 15s
+      write_timeout: 2s
+  - name: web
+    protocol: http
+    listen: ":8080"
+    upstream: "http://127.0.0.1:18080"
+    http:
+      dial_timeout: 4s
+      keep_alive: 20s
+      max_idle_connections: 40
+      max_idle_connections_per_host: 12
+      max_connections_per_host: 48
+      idle_connection_timeout: 25s
+      response_header_timeout: 6s
+      expect_continue_timeout: 2s
+      read_header_timeout: 7s
+      idle_timeout: 70s
+      max_header_bytes: 2097152
+      shutdown_timeout: 8s
+`), 0o600))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, &TCP{DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(15 * time.Second), WriteTimeout: Duration(2 * time.Second)}, cfg.Proxies[0].TCP)
+	require.Nil(t, cfg.Proxies[0].HTTP)
+	require.Nil(t, cfg.Proxies[1].TCP)
+	require.Equal(t, &HTTP{
+		DialTimeout: Duration(4 * time.Second), KeepAlive: Duration(20 * time.Second),
+		MaxIdleConnections: 40, MaxIdleConnectionsPerHost: 12, MaxConnectionsPerHost: 48,
+		IdleConnectionTimeout: Duration(25 * time.Second), ResponseHeaderTimeout: Duration(6 * time.Second),
+		ExpectContinueTimeout: Duration(2 * time.Second), ReadHeaderTimeout: Duration(7 * time.Second),
+		IdleTimeout: Duration(70 * time.Second), MaxHeaderBytes: 2 << 20, ShutdownTimeout: Duration(8 * time.Second),
+	}, cfg.Proxies[1].HTTP)
+
+	roundTripPath := filepath.Join(t.TempDir(), "round-trip.yaml")
+	require.NoError(t, Save(roundTripPath, cfg))
+	roundTrip, err := Load(roundTripPath)
+	require.NoError(t, err)
+	require.Equal(t, cfg, roundTrip)
+}
+
 // TestSaveReplacesConfigurationAndPreservesExistingPermissions covers atomic rewrite behavior.
 func TestSaveReplacesConfigurationAndPreservesExistingPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
@@ -75,6 +130,18 @@ func TestValidateRejectsInvalidConfigurations(t *testing.T) {
 		{name: "duplicate proxy name", mutate: func(cfg *Config) {
 			cfg.Proxies = append(cfg.Proxies, Proxy{Name: "web", Protocol: "tcp", Listen: ":8081", Upstream: "127.0.0.1:18081"})
 		}, wantErr: "duplicate proxy name"},
+		{name: "TCP settings on HTTP proxy", mutate: func(cfg *Config) { cfg.Proxies[0].TCP = &TCP{} }, wantErr: "tcp settings are only valid"},
+		{name: "HTTP settings on TCP proxy", mutate: func(cfg *Config) {
+			cfg.Proxies[0].Protocol = "tcp"
+			cfg.Proxies[0].Upstream = "127.0.0.1:18080"
+			cfg.Proxies[0].HTTP = &HTTP{}
+		}, wantErr: "http settings are only valid"},
+		{name: "negative TCP timeout", mutate: func(cfg *Config) {
+			cfg.Proxies[0].Protocol = "tcp"
+			cfg.Proxies[0].Upstream = "127.0.0.1:18080"
+			cfg.Proxies[0].TCP = &TCP{ReadTimeout: Duration(-time.Second)}
+		}, wantErr: "read_timeout must be between"},
+		{name: "HTTP header size too large", mutate: func(cfg *Config) { cfg.Proxies[0].HTTP = &HTTP{MaxHeaderBytes: maxHTTPHeaderSize + 1} }, wantErr: "max_header_bytes must be between"},
 	}
 
 	for _, testCase := range testCases {

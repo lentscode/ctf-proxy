@@ -12,8 +12,54 @@ import (
 
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/observe"
+	"github.com/lentscode/ctf-proxy/internal/proxy"
 	"github.com/stretchr/testify/require"
 )
+
+// TestRunnerOptionsUseYAMLSettings verifies the manager passes all parsed
+// protocol-specific values to the data-plane constructors.
+func TestRunnerOptionsUseYAMLSettings(t *testing.T) {
+	tcpDefinition := config.Proxy{TCP: &config.TCP{
+		DialTimeout: config.Duration(time.Second), ReadTimeout: config.Duration(2 * time.Second), WriteTimeout: config.Duration(3 * time.Second),
+	}}
+	require.Equal(t, proxy.TCPOptions{DialTimeout: time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second}, tcpOptions(tcpDefinition))
+
+	httpDefinition := config.Proxy{HTTP: &config.HTTP{
+		DialTimeout: config.Duration(time.Second), KeepAlive: config.Duration(2 * time.Second),
+		MaxIdleConnections: 3, MaxIdleConnectionsPerHost: 4, MaxConnectionsPerHost: 5,
+		IdleConnectionTimeout: config.Duration(6 * time.Second), ResponseHeaderTimeout: config.Duration(7 * time.Second),
+		ExpectContinueTimeout: config.Duration(8 * time.Second), ReadHeaderTimeout: config.Duration(9 * time.Second),
+		IdleTimeout: config.Duration(10 * time.Second), MaxHeaderBytes: 11, ShutdownTimeout: config.Duration(12 * time.Second),
+	}}
+	require.Equal(t, proxy.HTTPOptions{
+		DialTimeout: time.Second, KeepAlive: 2 * time.Second,
+		MaxIdleConnections: 3, MaxIdleConnectionsPerHost: 4, MaxConnectionsPerHost: 5,
+		IdleConnectionTimeout: 6 * time.Second, ResponseHeaderTimeout: 7 * time.Second,
+		ExpectContinueTimeout: 8 * time.Second, ReadHeaderTimeout: 9 * time.Second,
+		IdleTimeout: 10 * time.Second, MaxHeaderBytes: 11, ShutdownTimeout: 12 * time.Second,
+	}, httpOptions(httpDefinition))
+}
+
+// TestManagerReplacePreservesYAMLOnlyProtocolSettings prevents dashboard edits
+// from silently discarding timeout settings that are configured in YAML.
+func TestManagerReplacePreservesYAMLOnlyProtocolSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	original := config.Proxy{
+		Name: "tcp", Active: false, Protocol: "tcp", Listen: "127.0.0.1:31337", Upstream: "127.0.0.1:31338",
+		TCP: &config.TCP{ReadTimeout: config.Duration(15 * time.Second)},
+	}
+	require.NoError(t, config.Save(path, config.Config{Version: config.Version, Proxies: []config.Proxy{original}}))
+	store, err := config.OpenStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+
+	_, err = manager.Replace("tcp", config.Proxy{Active: false, Protocol: "tcp", Listen: original.Listen, Upstream: "127.0.0.1:31339"})
+	require.NoError(t, err)
+	require.Equal(t, original.TCP, store.Snapshot().Proxies[0].TCP)
+}
 
 // TestManagerReportsRejectedConfiguration verifies sanitized control failure events.
 func TestManagerReportsRejectedConfiguration(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
 	"go.yaml.in/yaml/v4"
@@ -28,6 +29,11 @@ const Version = 1
 // MaxConnectionsLimit prevents a malformed trusted configuration from
 // allocating an unbounded number of connection slots per proxy.
 const MaxConnectionsLimit = 65_536
+
+const (
+	maxTimeout        = 24 * time.Hour
+	maxHTTPHeaderSize = 16 << 20
+)
 
 // Config is the complete operator-managed configuration. MaxConnections limits
 // concurrent client connections for each proxy; zero selects the executable's
@@ -56,6 +62,60 @@ type Proxy struct {
 	Listen   string   `yaml:"listen"`
 	Upstream string   `yaml:"upstream"`
 	Filters  []string `yaml:"filters,omitempty"`
+	TCP      *TCP     `yaml:"tcp,omitempty"`
+	HTTP     *HTTP    `yaml:"http,omitempty"`
+}
+
+// Duration is a human-readable YAML duration such as "5s" or "1m".
+// A zero value is omitted and selects the proxy implementation's default.
+type Duration time.Duration
+
+// UnmarshalYAML accepts only Go duration strings to keep timeout units explicit.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+		return errors.New("duration must be a string such as 5s")
+	}
+	parsed, err := time.ParseDuration(value.Value)
+	if err != nil {
+		return fmt.Errorf("parse duration %q: %w", value.Value, err)
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// MarshalYAML persists durations in their standard textual form.
+func (d Duration) MarshalYAML() (any, error) {
+	return time.Duration(d).String(), nil
+}
+
+// IsZero allows omitted timeout fields to remain absent when configuration is saved.
+func (d Duration) IsZero() bool {
+	return d == 0
+}
+
+// TCP contains settings valid only for TCP proxies. Zero values select the
+// existing unbounded behavior.
+type TCP struct {
+	DialTimeout  Duration `yaml:"dial_timeout,omitempty"`
+	ReadTimeout  Duration `yaml:"read_timeout,omitempty"`
+	WriteTimeout Duration `yaml:"write_timeout,omitempty"`
+}
+
+// HTTP contains settings valid only for HTTP proxies. Zero values select the
+// existing transport and server defaults.
+type HTTP struct {
+	DialTimeout               Duration `yaml:"dial_timeout,omitempty"`
+	KeepAlive                 Duration `yaml:"keep_alive,omitempty"`
+	MaxIdleConnections        int      `yaml:"max_idle_connections,omitempty"`
+	MaxIdleConnectionsPerHost int      `yaml:"max_idle_connections_per_host,omitempty"`
+	MaxConnectionsPerHost     int      `yaml:"max_connections_per_host,omitempty"`
+	IdleConnectionTimeout     Duration `yaml:"idle_connection_timeout,omitempty"`
+	ResponseHeaderTimeout     Duration `yaml:"response_header_timeout,omitempty"`
+	ExpectContinueTimeout     Duration `yaml:"expect_continue_timeout,omitempty"`
+	ReadHeaderTimeout         Duration `yaml:"read_header_timeout,omitempty"`
+	IdleTimeout               Duration `yaml:"idle_timeout,omitempty"`
+	MaxHeaderBytes            int      `yaml:"max_header_bytes,omitempty"`
+	ShutdownTimeout           Duration `yaml:"shutdown_timeout,omitempty"`
 }
 
 // Store serializes in-process configuration changes and persists each accepted
@@ -259,6 +319,14 @@ func clone(cfg Config) Config {
 	for index, proxy := range cfg.Proxies {
 		copy.Proxies[index] = proxy
 		copy.Proxies[index].Filters = append([]string(nil), proxy.Filters...)
+		if proxy.TCP != nil {
+			tcp := *proxy.TCP
+			copy.Proxies[index].TCP = &tcp
+		}
+		if proxy.HTTP != nil {
+			http := *proxy.HTTP
+			copy.Proxies[index].HTTP = &http
+		}
 	}
 	return copy
 }
@@ -275,16 +343,84 @@ func (p Proxy) validate() error {
 		return err
 	}
 	if p.Protocol == "tcp" {
+		if p.HTTP != nil {
+			return errors.New("http settings are only valid for http proxies")
+		}
 		if err := validateAddress(p.Upstream, "upstream"); err != nil {
 			return err
 		}
-	} else if err := validateHTTPUpstream(p.Upstream); err != nil {
-		return err
+		if p.TCP != nil {
+			if err := p.TCP.validate(); err != nil {
+				return fmt.Errorf("tcp settings: %w", err)
+			}
+		}
+	} else {
+		if p.TCP != nil {
+			return errors.New("tcp settings are only valid for tcp proxies")
+		}
+		if err := validateHTTPUpstream(p.Upstream); err != nil {
+			return err
+		}
+		if p.HTTP != nil {
+			if err := p.HTTP.validate(); err != nil {
+				return fmt.Errorf("http settings: %w", err)
+			}
+		}
 	}
 	for index, name := range p.Filters {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("filters at index %d is empty", index)
 		}
+	}
+	return nil
+}
+
+func (t TCP) validate() error {
+	for name, value := range map[string]Duration{
+		"dial_timeout":  t.DialTimeout,
+		"read_timeout":  t.ReadTimeout,
+		"write_timeout": t.WriteTimeout,
+	} {
+		if err := validateTimeout(name, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h HTTP) validate() error {
+	for name, value := range map[string]Duration{
+		"dial_timeout":            h.DialTimeout,
+		"keep_alive":              h.KeepAlive,
+		"idle_connection_timeout": h.IdleConnectionTimeout,
+		"response_header_timeout": h.ResponseHeaderTimeout,
+		"expect_continue_timeout": h.ExpectContinueTimeout,
+		"read_header_timeout":     h.ReadHeaderTimeout,
+		"idle_timeout":            h.IdleTimeout,
+		"shutdown_timeout":        h.ShutdownTimeout,
+	} {
+		if err := validateTimeout(name, value); err != nil {
+			return err
+		}
+	}
+	for name, value := range map[string]int{
+		"max_idle_connections":          h.MaxIdleConnections,
+		"max_idle_connections_per_host": h.MaxIdleConnectionsPerHost,
+		"max_connections_per_host":      h.MaxConnectionsPerHost,
+	} {
+		if value < 0 || value > MaxConnectionsLimit {
+			return fmt.Errorf("%s must be between 0 and %d", name, MaxConnectionsLimit)
+		}
+	}
+	if h.MaxHeaderBytes < 0 || h.MaxHeaderBytes > maxHTTPHeaderSize {
+		return fmt.Errorf("max_header_bytes must be between 0 and %d", maxHTTPHeaderSize)
+	}
+	return nil
+}
+
+func validateTimeout(name string, value Duration) error {
+	if value < 0 || time.Duration(value) > maxTimeout {
+		return fmt.Errorf("%s must be between 0s and %s", name, maxTimeout)
 	}
 	return nil
 }
