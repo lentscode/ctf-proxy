@@ -44,6 +44,24 @@ func ListenLoopback(addr string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
+// ListenDashboard binds an explicitly requested dashboard listener. It is
+// intended for a specific protected-network address, such as a Tailscale IP;
+// wildcard addresses are rejected so an operator cannot accidentally expose
+// the bearer-protected management API on every interface.
+func ListenDashboard(addr string) (net.Listener, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid dashboard address: %w", err)
+	}
+	if host == "" {
+		return nil, errors.New("dashboard address must name a specific host or IP")
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return nil, errors.New("dashboard address must not use an unspecified IP")
+	}
+	return net.Listen("tcp", addr)
+}
+
 // NewHandler returns the local control-plane HTTP handler.
 func NewHandler(manager *Manager, tokens []string, hubs ...*observe.Hub) http.Handler {
 	var hub *observe.Hub

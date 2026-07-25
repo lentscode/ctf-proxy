@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // TestDefaultControlAddressIsLoopback protects the loopback-only default.
@@ -23,6 +26,34 @@ func TestDefaultControlAddressIsLoopback(t *testing.T) {
 				t.Fatalf("unexpected default control address %q", testCase.got)
 			}
 		})
+	}
+}
+
+// TestServeHTTPServersStopsAllListeners verifies the optional dashboard
+// listener shares the process lifecycle with the loopback control listener.
+func TestServeHTTPServersStopsAllListeners(t *testing.T) {
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = first.Close()
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serveHTTPServers(ctx, http.NotFoundHandler(), first, second) }()
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("serveHTTPServers: %v", err)
+	}
+	for _, address := range []string{first.Addr().String(), second.Addr().String()} {
+		connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			t.Fatalf("listener %s remained open", address)
+		}
 	}
 }
 

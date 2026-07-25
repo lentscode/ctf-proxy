@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -62,6 +63,10 @@ func run(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
+	dashboardAddr := os.Getenv("CTF_PROXY_DASHBOARD_ADDR")
+	if dashboardAddr != "" && os.Getenv(dashboardModeEnv) == "disabled" {
+		return errors.New("CTF_PROXY_DASHBOARD_ADDR requires the embedded dashboard")
+	}
 	tokensFile := os.Getenv("CTF_PROXY_TOKENS_FILE")
 	if tokensFile == "" {
 		tokensFile = defaultTokensFile
@@ -88,11 +93,43 @@ func run(ctx context.Context, configPath string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler}
 	logger.Info("control API listening", "address", controlAddr)
-	go func() { <-ctx.Done(); _ = server.Close() }()
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
+	listeners := []net.Listener{listener}
+	if dashboardAddr != "" {
+		dashboardListener, err := control.ListenDashboard(dashboardAddr)
+		if err != nil {
+			return err
+		}
+		listeners = append(listeners, dashboardListener)
+		logger.Info("dashboard listening", "address", dashboardAddr)
+	}
+	return serveHTTPServers(ctx, handler, listeners...)
+}
+
+// serveHTTPServers serves one handler on every requested listener and closes
+// them all when the process context ends or any server returns an error.
+func serveHTTPServers(ctx context.Context, handler http.Handler, listeners ...net.Listener) error {
+	servers := make([]*http.Server, len(listeners))
+	results := make(chan error, len(listeners))
+	for index, listener := range listeners {
+		server := &http.Server{Handler: handler}
+		servers[index] = server
+		go func() { results <- server.Serve(listener) }()
+	}
+	stop := context.AfterFunc(ctx, func() {
+		for _, server := range servers {
+			_ = server.Close()
+		}
+	})
+	defer stop()
+	defer func() {
+		for _, server := range servers {
+			_ = server.Close()
+		}
+	}()
+
+	err := <-results
+	if ctx.Err() != nil && errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
 	return err

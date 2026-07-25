@@ -287,6 +287,19 @@ func TestListenLoopback(t *testing.T) {
 	require.ErrorContains(t, err, "loopback")
 }
 
+// TestListenDashboardRequiresAnExplicitAddress prevents an opt-in remote
+// dashboard listener from accidentally binding every network interface.
+func TestListenDashboardRequiresAnExplicitAddress(t *testing.T) {
+	listener, err := ListenDashboard("127.0.0.1:0")
+	require.NoError(t, err)
+	require.NoError(t, listener.Close())
+
+	for _, address := range []string{":0", "0.0.0.0:0", "[::]:0"} {
+		_, err := ListenDashboard(address)
+		require.Error(t, err, address)
+	}
+}
+
 // TestAPIRequiresValidBearerToken covers missing, malformed, and valid credentials.
 func TestAPIRequiresValidBearerToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")

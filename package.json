@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others --names api,web --prefix-colors blue,green \"cross-env CTF_PROXY_DASHBOARD=disabled go run ./cmd/ctf-proxy\" \"vite\"",
+    "dev": "concurrently --kill-others --names api,web --prefix-colors blue,green \"cross-env CTF_PROXY_DASHBOARD=disabled CTF_PROXY_DASHBOARD_ADDR= go run ./cmd/ctf-proxy\" \"vite\"",
     "build": "pnpm run build:frontend && pnpm run build:backend",
     "start": "pnpm run build && exec ./dist/ctf-proxy",
     "build:frontend": "tsc -b && vite build",
