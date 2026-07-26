@@ -1,0 +1,13 @@
+version: 1
+filters:
+  - name: checker
+    active: true
+    protocol: http
+    direction: request
+    action: reject
+    match:
+      all:
+        - field: http.header
+          header: User-Agent
+          operator: not_contains
+          value: checker

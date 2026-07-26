@@ -2,6 +2,7 @@ package filter
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,9 +119,10 @@ func TestCompileYAMLInactiveRulesAreSkipped(t *testing.T) {
 	}
 }
 
-// TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue covers the explicit
-// RE2-safe alternative to negative-lookahead regular expressions.
-func TestCompileYAMLNotContainsRejectsOnlyWhenHeaderLacksValue(t *testing.T) {
+// TestCompileYAMLNotContainsRejectsWhenHeaderLacksValue covers the explicit
+// RE2-safe alternative to negative-lookahead regular expressions, including
+// the case where the requested header is absent altogether.
+func TestCompileYAMLNotContainsRejectsWhenHeaderLacksValue(t *testing.T) {
 	filters, err := CompileYAML([]byte(`
 version: 1
 filters:
@@ -146,7 +148,7 @@ filters:
 		{name: "missing checker", header: []string{"curl/8"}, want: ActionReject},
 		{name: "includes checker", header: []string{"checker/1"}, want: ActionAllow},
 		{name: "one value includes checker", header: []string{"curl/8", "checker/1"}, want: ActionAllow},
-		{name: "header absent", want: ActionAllow},
+		{name: "header absent", want: ActionReject},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			header := make(map[string][]string)
@@ -155,6 +157,34 @@ filters:
 			}
 			decision, evaluateErr := filters[0].Evaluate(context.Background(), Message{
 				Protocol: ProtocolHTTP, Direction: DirectionRequest, HTTP: &HTTPMessage{Header: header},
+			})
+			require.NoError(t, evaluateErr)
+			assert.Equal(t, testCase.want, decision.Action)
+		})
+	}
+}
+
+func TestCheckerDefaultYAMLRequiresCheckerUserAgent(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "filters", "checker.yaml"))
+	require.NoError(t, err)
+
+	filters, err := CompileYAML(source)
+	require.NoError(t, err)
+	require.Len(t, filters, 1)
+	assert.Equal(t, "checker", filters[0].Name())
+
+	for _, testCase := range []struct {
+		name   string
+		header http.Header
+		want   Action
+	}{
+		{name: "absent user agent", want: ActionReject},
+		{name: "ordinary user agent", header: http.Header{"User-Agent": {"curl/8"}}, want: ActionReject},
+		{name: "checker user agent", header: http.Header{"User-Agent": {"checker/1"}}, want: ActionAllow},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			decision, evaluateErr := filters[0].Evaluate(context.Background(), Message{
+				Protocol: ProtocolHTTP, Direction: DirectionRequest, HTTP: &HTTPMessage{Header: testCase.header},
 			})
 			require.NoError(t, evaluateErr)
 			assert.Equal(t, testCase.want, decision.Action)

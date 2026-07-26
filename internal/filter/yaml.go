@@ -372,7 +372,7 @@ func (c compiledYAMLCondition) matches(message Message) bool {
 		}
 		values := message.HTTP.Header.Values(c.header)
 		if len(values) == 0 {
-			return false
+			return c.operator == MatchOperatorNotContains
 		}
 		if c.operator == MatchOperatorNotContains {
 			for _, value := range values {
