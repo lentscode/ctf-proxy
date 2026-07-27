@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,10 @@ const temporaryDirectory = await mkdtemp(join(tmpdir(), 'ctf-proxy-e2e-'))
 const configPath = join(temporaryDirectory, 'ctf-proxy.yaml')
 const tokensPath = join(temporaryDirectory, '.tokens')
 const binaryPath = join(temporaryDirectory, 'ctf-proxy')
+const composeRoot = join(temporaryDirectory, 'services')
+const fakeBinDirectory = join(temporaryDirectory, 'bin')
+const fakeDockerPath = join(fakeBinDirectory, 'docker')
+const fakeDockerLog = join(temporaryDirectory, 'docker.log')
 
 let controlProcess
 
@@ -65,6 +69,16 @@ async function cleanup() {
 try {
   await writeFile(configPath, 'version: 1\nproxies: []\n', { mode: 0o600 })
   await writeFile(tokensPath, `${token}\n`, { mode: 0o600 })
+  await mkdir(join(composeRoot, 'demo'), { recursive: true })
+  await mkdir(fakeBinDirectory, { recursive: true })
+  await writeFile(join(composeRoot, 'demo', 'compose.yaml'), 'services:\n  web:\n    image: example\n    ports:\n      - "18080:80"\n', { mode: 0o600 })
+  await writeFile(fakeDockerPath, `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$CTF_PROXY_FAKE_DOCKER_LOG"
+[ "$1" = "compose" ] || exit 2
+exit 0
+`)
+  await chmod(fakeDockerPath, 0o755)
 
   const frontendBuild = command(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['run', 'build:frontend'])
   if (await waitForExit(frontendBuild) !== 0) throw new Error('could not build dashboard for E2E tests')
@@ -78,6 +92,9 @@ try {
       CTF_PROXY_CONFIG: configPath,
       CTF_PROXY_CONTROL_ADDR: controlAddress,
       CTF_PROXY_TOKENS_FILE: tokensPath,
+      CTF_PROXY_COMPOSE_ROOT: composeRoot,
+      CTF_PROXY_FAKE_DOCKER_LOG: fakeDockerLog,
+      PATH: `${fakeBinDirectory}:${process.env.PATH}`,
     },
   })
   await waitForControl()

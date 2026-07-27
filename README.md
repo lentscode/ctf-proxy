@@ -1,77 +1,54 @@
-# React + TypeScript + Vite
+# ctf-proxy
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+`ctf-proxy` is an operator-controlled TCP and HTTP mediation proxy for Attack
+& Defense CTF vulnboxes. Its local dashboard manages proxy definitions,
+filters, recent events, and the optional Compose takeover workflow.
 
-Currently, two official plugins are available:
+## Compose takeover (AD CTF only)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The **Compose takeover** page discovers `docker-compose.yaml`,
+`docker-compose.yml`, `compose.yaml`, and `compose.yml` in the immediate
+subdirectories of `CTF_PROXY_COMPOSE_ROOT` (default `/root`). It never scans
+or changes Docker state at startup. Add further filename variants with
+`CTF_PROXY_COMPOSE_FILE_NAMES`, using a comma-separated list; those names are
+added to the standard set. Names containing directory components are ignored.
 
-## React Compiler
+After an authenticated operator scan and confirmation, selected explicit TCP
+port publications are moved to an unused `127.0.0.1` port in the 20000–59999
+range. The original public binding is assigned to a generated ctf-proxy
+listener, then only the affected Compose services are recreated with Docker
+Compose v2 (`docker compose`). This keeps the upstream private while retaining
+the original public service port.
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+The first version supports explicit single TCP port mappings in short or long
+Compose syntax. It reports but does not manage UDP, ranges, dynamic ports,
+loopback-only mappings, host networking, and unsupported YAML forms. For every
+eligible port, select TCP or HTTP in the review. HTTP also requires choosing
+`http` or `https` for its upstream scheme.
 
-Note: This will impact Vite dev & build performances.
+Use **Restore** on the same page to remove generated proxies and recreate the
+affected service with its exact original Compose file. Restoration refuses to
+overwrite a Compose file that changed after takeover; resolve that drift before
+trying again. Private restore records live beside the main config in
+`.ctf-proxy-state` and are never exposed through the API.
 
-## Expanding the ESLint configuration
+`docker compose` must be installed and usable by the account running
+ctf-proxy. Do not leave a service published on its original port outside this
+workflow while a matching proxy is active.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Development
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+Run the dashboard and local API with `pnpm dev`. Release builds use:
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```sh
+pnpm build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Run checks with:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```sh
+go test ./...
+go test -race ./...
+pnpm lint
+pnpm build
 ```

@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
+	"github.com/lentscode/ctf-proxy/internal/compose"
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/control"
 	"github.com/lentscode/ctf-proxy/internal/observe"
@@ -21,6 +23,8 @@ const (
 	defaultConfigPath  = "ctf-proxy.yaml"
 	defaultControlAddr = "127.0.0.1:8081"
 	defaultTokensFile  = ".tokens"
+	defaultComposeRoot = "/root"
+	composeFilesEnv    = "CTF_PROXY_COMPOSE_FILE_NAMES"
 )
 
 // main starts the control plane and keeps the process alive until interrupted.
@@ -89,7 +93,16 @@ func run(ctx context.Context, configPath string) error {
 		}
 		fmt.Fprintf(os.Stderr, "ctf-proxy: generated initial control token: %s\n", token)
 	}
-	handler, err := newServerHandler(control.NewHandler(manager, tokens, observation.Hub()))
+	composeRoot := os.Getenv("CTF_PROXY_COMPOSE_ROOT")
+	if composeRoot == "" {
+		composeRoot = defaultComposeRoot
+	}
+	composeFiles := append([]string(nil), compose.DefaultFileNames...)
+	if extra := os.Getenv(composeFilesEnv); extra != "" {
+		composeFiles = append(composeFiles, strings.Split(extra, ",")...)
+	}
+	composeManager := control.NewComposeManager(composeRoot, configPath, manager, composeFiles)
+	handler, err := newServerHandler(control.NewHandlerWithCompose(manager, tokens, observation.Hub(), composeManager))
 	if err != nil {
 		return err
 	}

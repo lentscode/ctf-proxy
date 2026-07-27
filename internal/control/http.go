@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lentscode/ctf-proxy/internal/compose"
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/observe"
 )
@@ -71,11 +72,18 @@ func NewHandler(manager *Manager, tokens []string, hubs ...*observe.Hub) http.Ha
 	return &api{manager: manager, tokens: tokens, hub: hub}
 }
 
+// NewHandlerWithCompose adds the optional AD CTF Compose takeover API while
+// retaining NewHandler's existing public contract for callers that do not use it.
+func NewHandlerWithCompose(manager *Manager, tokens []string, hub *observe.Hub, composeManager *ComposeManager) http.Handler {
+	return &api{manager: manager, tokens: tokens, hub: hub, compose: composeManager}
+}
+
 // api routes authenticated HTTP requests to manager and observability services.
 type api struct {
 	manager *Manager
 	tokens  []string
 	hub     *observe.Hub
+	compose *ComposeManager
 }
 
 // proxyInput is the JSON representation accepted by proxy management endpoints.
@@ -91,6 +99,15 @@ type proxyInput struct {
 // yamlFilterInput is the JSON wrapper for a managed YAML filter document.
 type yamlFilterInput struct {
 	YAML string `json:"yaml"`
+}
+
+type composeApplyInput struct {
+	Revision   string              `json:"revision"`
+	Selections []compose.Selection `json:"selections"`
+}
+type composeRestoreInput struct {
+	IDs []string `json:"ids"`
+	All bool     `json:"all"`
 }
 
 // ServeHTTP authenticates and dispatches every local control-plane route.
@@ -134,12 +151,81 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.eventStream(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/api/v1/compose") {
+		a.composeRoutes(w, r)
+		return
+	}
 	const prefix = "/api/v1/proxies/"
 	if strings.HasPrefix(r.URL.Path, prefix) {
 		a.proxy(w, r, strings.TrimPrefix(r.URL.Path, prefix))
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+func (a *api) composeRoutes(w http.ResponseWriter, r *http.Request) {
+	if a.compose == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Compose takeover is unavailable")
+		return
+	}
+	switch r.URL.Path {
+	case "/api/v1/compose/projects":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		projects, revision, err := a.compose.Discover()
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"projects": projects, "revision": revision})
+	case "/api/v1/compose/deployments":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		deployments, err := a.compose.Deployments()
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
+	case "/api/v1/compose/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var input composeApplyInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		deployments, err := a.compose.Apply(input.Revision, input.Selections)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
+	case "/api/v1/compose/restore":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		var input composeRestoreInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		deployments, err := a.compose.Restore(input.IDs, input.All)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "route not found")
+	}
 }
 
 // events returns a bounded snapshot of retained operational events.

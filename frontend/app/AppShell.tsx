@@ -2,6 +2,7 @@ import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { Dashboard } from './Dashboard'
 import { FiltersPage } from './FiltersPage'
 import { ProxiesPage } from './ProxiesPage'
+import { ComposeTakeoverPage } from './ComposeTakeoverPage'
 
 // AppShellProps contains the session-expiry callback shared by routed pages.
 interface AppShellProps {
@@ -17,6 +18,7 @@ export function AppShell({ onUnauthorized }: AppShellProps) {
         <nav className="grid gap-0.5 max-lg:flex max-lg:flex-none max-lg:gap-1">
           <NavLink className={({ isActive }) => `border-l px-2.5 py-2.5 text-sm no-underline transition ${isActive ? 'border-zinc-100 bg-zinc-900 text-zinc-100' : 'border-transparent text-zinc-400 hover:border-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'} max-lg:border-l-0 max-lg:border-b max-lg:px-2 max-lg:hover:border-b-zinc-100`} to="/" end>Dashboard</NavLink>
           <NavLink className={({ isActive }) => `border-l px-2.5 py-2.5 text-sm no-underline transition ${isActive ? 'border-zinc-100 bg-zinc-900 text-zinc-100' : 'border-transparent text-zinc-400 hover:border-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'} max-lg:border-l-0 max-lg:border-b max-lg:px-2 max-lg:hover:border-b-zinc-100`} to="/proxies">Proxies</NavLink>
+          <NavLink className={({ isActive }) => `border-l px-2.5 py-2.5 text-sm no-underline transition ${isActive ? 'border-zinc-100 bg-zinc-900 text-zinc-100' : 'border-transparent text-zinc-400 hover:border-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'} max-lg:border-l-0 max-lg:border-b max-lg:px-2 max-lg:hover:border-b-zinc-100`} to="/compose-takeover">Compose takeover</NavLink>
           <NavLink className={({ isActive }) => `border-l px-2.5 py-2.5 text-sm no-underline transition ${isActive ? 'border-zinc-100 bg-zinc-900 text-zinc-100' : 'border-transparent text-zinc-400 hover:border-zinc-100 hover:bg-zinc-900 hover:text-zinc-100'} max-lg:border-l-0 max-lg:border-b max-lg:px-2 max-lg:hover:border-b-zinc-100`} to="/filters">Filters</NavLink>
         </nav>
       </aside>
@@ -24,6 +26,7 @@ export function AppShell({ onUnauthorized }: AppShellProps) {
         <Routes>
           <Route path="/" element={<Dashboard onUnauthorized={onUnauthorized} />} />
           <Route path="/proxies" element={<ProxiesPage onUnauthorized={onUnauthorized} />} />
+          <Route path="/compose-takeover" element={<ComposeTakeoverPage onUnauthorized={onUnauthorized} />} />
           <Route path="/filters" element={<FiltersPage onUnauthorized={onUnauthorized} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

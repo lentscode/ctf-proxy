@@ -65,6 +65,11 @@ const healthSchema = z.object({ status: z.literal('ok') })
 const proxiesSchema = z.object({ proxies: z.array(proxyViewSchema) })
 const eventsSchema = z.object({ events: z.array(eventSchema) })
 const filtersSchema = z.object({ filters: z.array(filterViewSchema) })
+const composeCandidateSchema = z.object({ id:z.string(), project:z.string(), compose_file:z.string(), service:z.string(), listen:z.string(), target:z.string(), upstream:z.string(), eligible:z.boolean(), reason:z.string().optional() })
+const composeProjectSchema = z.object({ name:z.string(), compose_file:z.string(), candidates:z.array(composeCandidateSchema) })
+const composeDiscoverySchema = z.object({ projects:z.array(composeProjectSchema), revision:z.string() })
+const deploymentSchema = z.object({ id:z.string(), project:z.string(), compose_file:z.string(), service:z.string(), listen:z.string(), upstream:z.string(), proxy:z.string(), protocol:z.enum(['tcp','http']), state:z.string() })
+const deploymentsSchema = z.object({ deployments:z.array(deploymentSchema) })
 
 // ProxyView is the server's proxy representation, including runtime state.
 export type ProxyView = z.infer<typeof proxyViewSchema>
@@ -76,6 +81,9 @@ export type FilterView = z.infer<typeof filterViewSchema>
 export type ManagedFilterView = z.infer<typeof managedFilterViewSchema>
 // ObserveEvent is the sanitized event shape accepted from API and SSE responses.
 export type ObserveEvent = z.infer<typeof eventSchema>
+export type ComposeCandidate = z.infer<typeof composeCandidateSchema>
+export type ComposeProject = z.infer<typeof composeProjectSchema>
+export type ComposeDeployment = z.infer<typeof deploymentSchema>
 
 // isUnauthorized identifies an expired or invalid bearer-token response.
 export function isUnauthorized(error: unknown): boolean {
@@ -134,6 +142,11 @@ export async function getEvents(): Promise<ObserveEvent[]> {
 export async function getFilters(): Promise<FilterView[]> {
   return (await request('/api/v1/filters', filtersSchema)).filters
 }
+
+export async function discoverCompose(): Promise<z.infer<typeof composeDiscoverySchema>> { return request('/api/v1/compose/projects', composeDiscoverySchema) }
+export async function getComposeDeployments(): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/deployments', deploymentsSchema)).deployments }
+export async function applyCompose(revision: string, selections: Array<{id:string, protocol:'tcp'|'http', scheme?:'http'|'https'}>): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/apply', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,selections})})).deployments }
+export async function restoreCompose(ids: string[], all = false): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/restore', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,all})})).deployments }
 
 // getManagedFilter loads the editable source and assignments for one managed filter.
 export async function getManagedFilter(name: string): Promise<ManagedFilterView> {
