@@ -1,4 +1,5 @@
-// Package compose implements the deliberately narrow Docker Compose takeover
+// Package compose implements the deliberately narrow Docker Compose scan and
+// configuration workflow
 // workflow used by Attack & Defense CTF vulnboxes.
 package compose
 

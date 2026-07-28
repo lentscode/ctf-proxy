@@ -18,5 +18,5 @@ test('operator can scan, configure, and restore a Compose deployment', async ({ 
 
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByRole('button', { name: 'Restore', exact: true }).click()
-  await expect(page.getByText('No managed Compose deployments.')).toBeVisible()
+  await expect(page.getByText('No managed deployments.')).toBeVisible()
 })
