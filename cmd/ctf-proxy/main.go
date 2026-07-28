@@ -102,7 +102,7 @@ func run(ctx context.Context, configPath string) error {
 		composeFiles = append(composeFiles, strings.Split(extra, ",")...)
 	}
 	composeManager := control.NewComposeManager(composeRoot, configPath, manager, composeFiles)
-	handler, err := newServerHandler(control.NewHandlerWithCompose(manager, tokens, observation.Hub(), composeManager))
+	handler, err := newServerHandler(control.NewHandlerWithScanAndConfigure(manager, tokens, observation.Hub(), composeManager))
 	if err != nil {
 		return err
 	}

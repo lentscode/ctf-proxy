@@ -81,9 +81,10 @@ export type FilterView = z.infer<typeof filterViewSchema>
 export type ManagedFilterView = z.infer<typeof managedFilterViewSchema>
 // ObserveEvent is the sanitized event shape accepted from API and SSE responses.
 export type ObserveEvent = z.infer<typeof eventSchema>
-export type ComposeCandidate = z.infer<typeof composeCandidateSchema>
-export type ComposeProject = z.infer<typeof composeProjectSchema>
-export type ComposeDeployment = z.infer<typeof deploymentSchema>
+export type ScanCandidate = z.infer<typeof composeCandidateSchema>
+export type ScanProject = z.infer<typeof composeProjectSchema>
+export type ManagedDeployment = z.infer<typeof deploymentSchema>
+export type ScanDiscovery = z.infer<typeof composeDiscoverySchema>
 
 // isUnauthorized identifies an expired or invalid bearer-token response.
 export function isUnauthorized(error: unknown): boolean {
@@ -143,10 +144,10 @@ export async function getFilters(): Promise<FilterView[]> {
   return (await request('/api/v1/filters', filtersSchema)).filters
 }
 
-export async function discoverCompose(): Promise<z.infer<typeof composeDiscoverySchema>> { return request('/api/v1/compose/projects', composeDiscoverySchema) }
-export async function getComposeDeployments(): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/deployments', deploymentsSchema)).deployments }
-export async function applyCompose(revision: string, selections: Array<{id:string, protocol:'tcp'|'http', scheme?:'http'|'https'}>): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/apply', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,selections})})).deployments }
-export async function restoreCompose(ids: string[], all = false): Promise<ComposeDeployment[]> { return (await request('/api/v1/compose/restore', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,all})})).deployments }
+export async function scanProjects(): Promise<z.infer<typeof composeDiscoverySchema>> { return request('/api/v1/scan-and-configure/projects', composeDiscoverySchema) }
+export async function getManagedDeployments(): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/deployments', deploymentsSchema)).deployments }
+export async function applyScanConfiguration(revision: string, selections: Array<{id:string, protocol:'tcp'|'http', scheme?:'http'|'https'}>): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/apply', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,selections})})).deployments }
+export async function restoreManagedDeployments(ids: string[], all = false): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/restore', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,all})})).deployments }
 
 // getManagedFilter loads the editable source and assignments for one managed filter.
 export async function getManagedFilter(name: string): Promise<ManagedFilterView> {

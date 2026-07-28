@@ -72,9 +72,10 @@ func NewHandler(manager *Manager, tokens []string, hubs ...*observe.Hub) http.Ha
 	return &api{manager: manager, tokens: tokens, hub: hub}
 }
 
-// NewHandlerWithCompose adds the optional AD CTF Compose takeover API while
-// retaining NewHandler's existing public contract for callers that do not use it.
-func NewHandlerWithCompose(manager *Manager, tokens []string, hub *observe.Hub, composeManager *ComposeManager) http.Handler {
+// NewHandlerWithScanAndConfigure adds the optional AD CTF scan-and-configure
+// API while retaining NewHandler's existing public contract for callers that do
+// not use it.
+func NewHandlerWithScanAndConfigure(manager *Manager, tokens []string, hub *observe.Hub, composeManager *ComposeManager) http.Handler {
 	return &api{manager: manager, tokens: tokens, hub: hub, compose: composeManager}
 }
 
@@ -151,8 +152,8 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.eventStream(w, r)
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/v1/compose") {
-		a.composeRoutes(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api/v1/scan-and-configure") {
+		a.scanAndConfigureRoutes(w, r)
 		return
 	}
 	const prefix = "/api/v1/proxies/"
@@ -163,13 +164,13 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
 }
 
-func (a *api) composeRoutes(w http.ResponseWriter, r *http.Request) {
+func (a *api) scanAndConfigureRoutes(w http.ResponseWriter, r *http.Request) {
 	if a.compose == nil {
-		writeError(w, http.StatusNotFound, "not_found", "Compose takeover is unavailable")
+		writeError(w, http.StatusNotFound, "not_found", "Scan and configure is unavailable")
 		return
 	}
 	switch r.URL.Path {
-	case "/api/v1/compose/projects":
+	case "/api/v1/scan-and-configure/projects":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
@@ -180,7 +181,7 @@ func (a *api) composeRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"projects": projects, "revision": revision})
-	case "/api/v1/compose/deployments":
+	case "/api/v1/scan-and-configure/deployments":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
@@ -191,7 +192,7 @@ func (a *api) composeRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
-	case "/api/v1/compose/apply":
+	case "/api/v1/scan-and-configure/apply":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w)
 			return
@@ -207,7 +208,7 @@ func (a *api) composeRoutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deployments": deployments})
-	case "/api/v1/compose/restore":
+	case "/api/v1/scan-and-configure/restore":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w)
 			return

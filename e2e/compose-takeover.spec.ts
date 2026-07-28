@@ -1,12 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { authenticate } from './helpers'
 
-test('operator can apply and restore a Compose takeover', async ({ page }) => {
+test('operator can scan, configure, and restore a Compose deployment', async ({ page }) => {
   await authenticate(page)
-  await page.getByRole('link', { name: 'Compose takeover' }).click()
-  await expect(page.getByRole('heading', { name: 'Compose takeover' })).toBeVisible()
-
-  await page.getByRole('button', { name: 'Scan projects' }).click()
+  await page.getByRole('link', { name: 'Proxies' }).click()
+  await page.getByRole('button', { name: 'Scan and configure' }).click()
+  await expect(page.getByRole('heading', { name: 'Scan and configure' })).toBeVisible()
   await expect(page.getByText('demo (compose.yaml)')).toBeVisible()
   const selection = page.getByLabel(/Select web .*18080/)
   await expect(selection).toBeEnabled()
