@@ -2,11 +2,11 @@
 
 `ctf-proxy` is an operator-controlled TCP and HTTP mediation proxy for Attack
 & Defense CTF vulnboxes. Its local dashboard manages proxy definitions,
-filters, recent events, and the optional Compose takeover workflow.
+filters, recent events, and the optional Scan and configure workflow.
 
-## Compose takeover (AD CTF only)
+## Scan and configure (AD CTF only)
 
-The **Compose takeover** page discovers `docker-compose.yaml`,
+The **Scan and configure** control on the Proxies page discovers `docker-compose.yaml`,
 `docker-compose.yml`, `compose.yaml`, and `compose.yml` in the immediate
 subdirectories of `CTF_PROXY_COMPOSE_ROOT` (default `/root`). It never scans
 or changes Docker state at startup. Add further filename variants with
@@ -28,7 +28,7 @@ eligible port, select TCP or HTTP in the review. HTTP also requires choosing
 
 Use **Restore** on the same page to remove generated proxies and recreate the
 affected service with its exact original Compose file. Restoration refuses to
-overwrite a Compose file that changed after takeover; resolve that drift before
+overwrite a Compose file that changed after configuration; resolve that drift before
 trying again. Private restore records live beside the main config in
 `.ctf-proxy-state` and are never exposed through the API.
 

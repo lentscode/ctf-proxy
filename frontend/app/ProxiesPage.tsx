@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { createProxy, deleteProxy, getFilters, getProxies, isUnauthorized, proxyDefinitionSchema, replaceProxy, type FilterView, type ProxyDefinition, type ProxyView } from '../lib/api'
+import { createProxy, deleteProxy, getFilters, getProxies, isUnauthorized, proxyDefinitionSchema, replaceProxy, scanProjects, type FilterView, type ProxyDefinition, type ProxyView } from '../lib/api'
 import { queryClient } from '../lib/query-client'
 import { toast } from 'sonner'
+import { ScanAndConfigureModal } from './ScanAndConfigureModal'
 
 // ProxiesPageProps contains the callback used when any management request expires.
 interface ProxiesPageProps {
@@ -20,9 +21,12 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedName, setSelectedName] = useState<string | undefined>()
   const [isCreating, setIsCreating] = useState(false)
+  const [scanModalOpen, setScanModalOpen] = useState(false)
   const focusedOnce = useRef<string | undefined>(undefined)
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: getProxies })
   const filters = useQuery({ queryKey: ['filters'], queryFn: getFilters })
+  // Scan once when Proxies opens; applying changes remains an explicit modal action.
+  const discovery = useQuery({ queryKey: ['scan-projects'], queryFn: scanProjects })
   const requestedProxy = searchParams.get('proxy') ?? undefined
   const selectedProxyName = requestedProxy && proxies.data?.some((proxy) => proxy.name === requestedProxy) ? requestedProxy : selectedName
   const selected = proxies.data?.find((proxy) => proxy.name === selectedProxyName)
@@ -49,10 +53,10 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   })
 
   useEffect(() => {
-    if (isUnauthorized(proxies.error) || isUnauthorized(filters.error) || isUnauthorized(create.error) || isUnauthorized(replace.error) || isUnauthorized(remove.error)) {
+    if (isUnauthorized(proxies.error) || isUnauthorized(filters.error) || isUnauthorized(discovery.error) || isUnauthorized(create.error) || isUnauthorized(replace.error) || isUnauthorized(remove.error)) {
       onUnauthorized()
     }
-  }, [create.error, filters.error, onUnauthorized, proxies.error, remove.error, replace.error])
+  }, [create.error, discovery.error, filters.error, onUnauthorized, proxies.error, remove.error, replace.error])
 
   useEffect(() => {
     if (!requestedProxy || selected?.name !== requestedProxy || focusedOnce.current === requestedProxy) return
@@ -92,7 +96,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
     <main className="mx-auto w-full max-w-[1440px] px-8 pt-14 pb-8 max-lg:px-6 max-lg:pt-10 max-lg:pb-6 max-sm:px-4 max-sm:pt-8 max-sm:pb-4">
       <header className="flex min-h-26 items-end justify-between gap-4 border-b border-zinc-700 pb-6 max-sm:min-h-0 max-sm:items-start">
         <div><p className="m-0 font-mono text-[11px] leading-none tracking-[0.08em] text-zinc-400 uppercase">Configuration</p><h1 className="mt-1.5 mb-0 text-3xl font-semibold tracking-tight text-zinc-100">Proxies</h1></div>
-        <button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => selectProxy(undefined)}>Add proxy</button>
+        <div className="flex flex-wrap items-center justify-end gap-2"><button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60" onClick={() => setScanModalOpen(true)} disabled={discovery.isLoading}>Scan and configure</button><button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => selectProxy(undefined)}>Add proxy</button></div>
       </header>
       <div className="grid min-h-140 grid-cols-[minmax(250px,0.8fr)_minmax(0,1.2fr)] max-lg:min-h-0 max-lg:grid-cols-1">
         <section className="border-r border-zinc-700 p-6 max-lg:border-r-0 max-lg:border-b" aria-labelledby="configured-proxies">
@@ -120,6 +124,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
           />
         </section>}
       </div>
+      <ScanAndConfigureModal discovery={discovery} open={scanModalOpen} onClose={() => setScanModalOpen(false)} onUnauthorized={onUnauthorized} />
     </main>
   )
 }

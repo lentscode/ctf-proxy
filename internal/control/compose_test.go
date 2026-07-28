@@ -17,13 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAPIComposeTakeoverApplyAndRestore(t *testing.T) {
+func TestAPIScanAndConfigureApplyAndRestore(t *testing.T) {
 	root, _, handler, calls := newComposeAPITestServer(t, false)
 	composePath := writeComposeFixture(t, root, "compose.yaml")
 	original, err := os.ReadFile(composePath)
 	require.NoError(t, err)
 
-	response := serveAPI(handler, http.MethodGet, "/api/v1/compose/projects", "")
+	response := serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/projects", "")
 	require.Equal(t, http.StatusOK, response.Code)
 	var discovery struct {
 		Projects []compose.Project `json:"projects"`
@@ -34,7 +34,7 @@ func TestAPIComposeTakeoverApplyAndRestore(t *testing.T) {
 	candidate := discovery.Projects[0].Candidates[0]
 	require.True(t, candidate.Eligible)
 
-	response = serveAPI(handler, http.MethodPost, "/api/v1/compose/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
 	require.Equal(t, http.StatusOK, response.Code)
 	rewritten, err := os.ReadFile(composePath)
 	require.NoError(t, err)
@@ -42,7 +42,7 @@ func TestAPIComposeTakeoverApplyAndRestore(t *testing.T) {
 	require.NotEqual(t, original, rewritten)
 	require.GreaterOrEqual(t, len(*calls), 3) // version, config, up
 
-	response = serveAPI(handler, http.MethodGet, "/api/v1/compose/deployments", "")
+	response = serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/deployments", "")
 	require.Equal(t, http.StatusOK, response.Code)
 	var deployments struct {
 		Deployments []compose.Deployment `json:"deployments"`
@@ -53,7 +53,7 @@ func TestAPIComposeTakeoverApplyAndRestore(t *testing.T) {
 	response = serveAPI(handler, http.MethodGet, "/api/v1/proxies/"+proxy, "")
 	require.Equal(t, http.StatusOK, response.Code)
 
-	response = serveAPI(handler, http.MethodPost, "/api/v1/compose/restore", `{"ids":["`+candidate.ID+`"]}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/restore", `{"ids":["`+candidate.ID+`"]}`)
 	require.Equal(t, http.StatusOK, response.Code)
 	restored, err := os.ReadFile(composePath)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestAPIComposeTakeoverApplyAndRestore(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, response.Code)
 }
 
-func TestAPIComposeTakeoverRejectsInvalidApplyRequests(t *testing.T) {
+func TestAPIScanAndConfigureRejectsInvalidApplyRequests(t *testing.T) {
 	tests := []struct {
 		name string
 		body func(revision, id string) string
@@ -81,55 +81,55 @@ func TestAPIComposeTakeoverRejectsInvalidApplyRequests(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root, _, handler, _ := newComposeAPITestServer(t, false)
 			writeComposeFixture(t, root, "docker-compose.yml")
-			response := serveAPI(handler, http.MethodGet, "/api/v1/compose/projects", "")
+			response := serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/projects", "")
 			var discovery struct {
 				Projects []compose.Project `json:"projects"`
 				Revision string            `json:"revision"`
 			}
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &discovery))
-			response = serveAPI(handler, http.MethodPost, "/api/v1/compose/apply", test.body(discovery.Revision, discovery.Projects[0].Candidates[0].ID))
+			response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/apply", test.body(discovery.Revision, discovery.Projects[0].Candidates[0].ID))
 			require.Equal(t, http.StatusBadRequest, response.Code)
 		})
 	}
 }
 
-func TestAPIComposeTakeoverBlocksDriftedRestore(t *testing.T) {
+func TestAPIScanAndConfigureBlocksDriftedRestore(t *testing.T) {
 	root, _, handler, _ := newComposeAPITestServer(t, false)
 	composePath := writeComposeFixture(t, root, "docker-compose.yml")
-	response := serveAPI(handler, http.MethodGet, "/api/v1/compose/projects", "")
+	response := serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/projects", "")
 	var discovery struct {
 		Projects []compose.Project `json:"projects"`
 		Revision string            `json:"revision"`
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &discovery))
 	candidate := discovery.Projects[0].Candidates[0]
-	response = serveAPI(handler, http.MethodPost, "/api/v1/compose/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NoError(t, os.WriteFile(composePath, []byte("services: {}\n# operator change\n"), 0o600))
-	response = serveAPI(handler, http.MethodPost, "/api/v1/compose/restore", `{"ids":["`+candidate.ID+`"]}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/restore", `{"ids":["`+candidate.ID+`"]}`)
 	require.Equal(t, http.StatusBadRequest, response.Code)
-	response = serveAPI(handler, http.MethodGet, "/api/v1/compose/deployments", "")
+	response = serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/deployments", "")
 	require.Contains(t, response.Body.String(), "drifted")
 }
 
-func TestAPIComposeTakeoverRollsBackComposeFailure(t *testing.T) {
+func TestAPIScanAndConfigureRollsBackComposeFailure(t *testing.T) {
 	root, _, handler, _ := newComposeAPITestServer(t, true)
 	composePath := writeComposeFixture(t, root, "compose.yml")
 	original, err := os.ReadFile(composePath)
 	require.NoError(t, err)
-	response := serveAPI(handler, http.MethodGet, "/api/v1/compose/projects", "")
+	response := serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/projects", "")
 	var discovery struct {
 		Projects []compose.Project `json:"projects"`
 		Revision string            `json:"revision"`
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &discovery))
 	candidate := discovery.Projects[0].Candidates[0]
-	response = serveAPI(handler, http.MethodPost, "/api/v1/compose/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/scan-and-configure/apply", `{"revision":"`+discovery.Revision+`","selections":[{"id":"`+candidate.ID+`","protocol":"tcp"}]}`)
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	current, err := os.ReadFile(composePath)
 	require.NoError(t, err)
 	require.Equal(t, original, current)
-	response = serveAPI(handler, http.MethodGet, "/api/v1/compose/deployments", "")
+	response = serveAPI(handler, http.MethodGet, "/api/v1/scan-and-configure/deployments", "")
 	var deployments struct {
 		Deployments []compose.Deployment `json:"deployments"`
 	}
@@ -160,7 +160,7 @@ func newComposeAPITestServer(t *testing.T, failUp bool) (string, string, http.Ha
 	}
 	t.Cleanup(func() { compose.RunCompose = previous })
 	composeManager := NewComposeManager(root, path, manager)
-	return root, path, NewHandlerWithCompose(manager, []string{"test-token"}, nil, composeManager), &calls
+	return root, path, NewHandlerWithScanAndConfigure(manager, []string{"test-token"}, nil, composeManager), &calls
 }
 
 func writeComposeFixture(t *testing.T, root, fileName string) string {
