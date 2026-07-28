@@ -5,6 +5,7 @@ import { ManagedFilterForm } from './ManagedFilterForm'
 import { createEmptyDraft, parseManagedFilterYAML, serializeManagedFilterYAML, type ManagedFilterDraft } from './managed-filter-form'
 import { createManagedFilter, deleteManagedFilter, getFilters, getManagedFilter, getProxies, isUnauthorized, proxyDefinitionSchema, replaceManagedFilter, replaceProxy, type FilterView, type ManagedFilterView, type ProxyView } from '../lib/api'
 import { queryClient } from '../lib/query-client'
+import { toast } from 'sonner'
 
 interface FiltersPageProps {
   onUnauthorized: () => void
@@ -19,7 +20,6 @@ type Editor =
 export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
   const [searchParams] = useSearchParams()
   const [editor, setEditor] = useState<Editor>(undefined)
-  const [removalNotice, setRemovalNotice] = useState<string | undefined>()
   const focusedProxy = searchParams.get('proxy') ?? undefined
   const focusedOnce = useRef<string | undefined>(undefined)
   const proxies = useQuery({ queryKey: ['proxies'], queryFn: getProxies })
@@ -40,11 +40,13 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
   }
   const create = useMutation({
     mutationFn: ({ proxyName, draft }: { proxyName: string, draft: ManagedFilterDraft }) => createManagedFilter(proxyName, serializeManagedFilterYAML(draft)),
-    onSuccess: async () => { setEditor(undefined); await refresh() },
+    onSuccess: async (_, { draft }) => { setEditor(undefined); await refresh(); toast.success('Filter created', { description: `${draft.name} was added.` }) },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not create filter', { description: 'Check the values and try again.' }) },
   })
   const replace = useMutation({
     mutationFn: ({ name, draft }: { name: string, draft: ManagedFilterDraft }) => replaceManagedFilter(name, serializeManagedFilterYAML(draft)),
-    onSuccess: async () => { setEditor(undefined); await refresh() },
+    onSuccess: async (_, { name }) => { setEditor(undefined); await refresh(); toast.success('Filter saved', { description: `${name} was updated.` }) },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not save filter', { description: 'Check the values and try again.' }) },
   })
   const remove = useMutation({
     mutationFn: async ({ proxy, filter }: { proxy: ProxyView, filter: FilterView }) => {
@@ -65,9 +67,10 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
     },
     onSuccess: async (result) => {
       setEditor(undefined)
-      setRemovalNotice(result.cleanupFailed ? 'Filter detached, but its unused managed definition could not be deleted.' : result.cleaned ? 'Filter detached and its unused managed definition was deleted.' : 'Filter detached from this proxy.')
       await refresh()
+      toast.success('Filter detached', { description: result.cleanupFailed ? 'The unused managed definition could not be deleted.' : result.cleaned ? 'Its unused managed definition was also deleted.' : 'It is no longer assigned to this proxy.' })
     },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not detach filter', { description: 'Try again in a moment.' }) },
   })
 
   useEffect(() => {
@@ -87,11 +90,8 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
   const filtersByName = useMemo(() => new Map(filters.data?.map((filter) => [filter.name, filter])), [filters.data])
   const assignedFilterNames = useMemo(() => new Set(proxies.data?.flatMap((proxy) => proxy.filters) ?? []), [proxies.data])
   const unassignedFilters = useMemo(() => filters.data?.filter((filter) => !assignedFilterNames.has(filter.name)) ?? [], [assignedFilterNames, filters.data])
-  const mutationError = [create.error, replace.error, remove.error].find((error) => error && !isUnauthorized(error))
-
   function confirmRemove(proxy: ProxyView, filter: FilterView) {
     if (window.confirm(`Detach filter “${filter.name}” from proxy “${proxy.name}”?`)) {
-      setRemovalNotice(undefined)
       remove.mutate({ proxy, filter })
     }
   }
@@ -101,8 +101,6 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
       <header className="flex min-h-26 items-end justify-between gap-4 border-b border-zinc-700 pb-6 max-sm:min-h-0 max-sm:items-start">
         <div><p className="m-0 font-mono text-[11px] leading-none tracking-[0.08em] text-zinc-400 uppercase">Configuration</p><h1 className="mt-1.5 mb-0 text-3xl font-semibold tracking-tight text-zinc-100">Filters</h1></div>
       </header>
-      {removalNotice && <p className="m-0 border-b border-zinc-700 py-4 text-sm text-zinc-200" role="status">{removalNotice}</p>}
-      {mutationError && <p className="m-0 border-b border-zinc-700 py-4 text-sm text-zinc-200" role="alert">Unable to update this filter. Check the values and try again.</p>}
       {proxies.isLoading && <p className="m-0 py-6 text-sm text-zinc-400">Loading proxy filters…</p>}
       {proxies.isError && !isUnauthorized(proxies.error) && <p className="m-0 py-6 text-sm text-zinc-400">Unable to load proxies.</p>}
       {proxies.data?.length === 0 && <p className="m-0 py-6 text-sm text-zinc-400">No proxies configured.</p>}
@@ -111,17 +109,17 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
         {proxies.data?.map((proxy) => {
           const groupFilters = proxy.filters.map((name) => filtersByName.get(name) ?? unavailableFilter(name))
           const currentEditor = editor?.mode === 'create' && editor.proxy.name === proxy.name
-            ? <ManagedFilterForm key={`create-${proxy.name}`} initial={createEmptyDraft(proxy.protocol)} isExisting={false} isSaving={create.isPending} saveError={create.error && !isUnauthorized(create.error) ? 'Unable to create this filter. Check the values and try again.' : undefined} onSave={async (draft) => { await create.mutateAsync({ proxyName: proxy.name, draft }) }} onCancel={() => setEditor(undefined)} />
+              ? <ManagedFilterForm key={`create-${proxy.name}`} initial={createEmptyDraft(proxy.protocol)} isExisting={false} isSaving={create.isPending} onSave={async (draft) => { await create.mutateAsync({ proxyName: proxy.name, draft }) }} onCancel={() => setEditor(undefined)} />
             : editor?.mode === 'edit' && editor.proxyName === proxy.name
-              ? <ManagedEditor filterName={editor.filterName} managed={managed} isSaving={replace.isPending} saveError={replace.error && !isUnauthorized(replace.error) ? 'Unable to save this filter. Check the values and try again.' : undefined} onSave={async (draft) => { await replace.mutateAsync({ name: editor.filterName, draft }) }} onCancel={() => setEditor(undefined)} />
+              ? <ManagedEditor filterName={editor.filterName} managed={managed} isSaving={replace.isPending} onSave={async (draft) => { await replace.mutateAsync({ name: editor.filterName, draft }) }} onCancel={() => setEditor(undefined)} />
               : undefined
           return <section key={proxy.name} className="scroll-mt-6" aria-labelledby={proxySectionID(proxy.name)}>
             <header className={`flex items-center gap-4 bg-zinc-900/45 px-5 py-5 max-sm:items-start ${focusedProxy === proxy.name ? 'bg-zinc-900/75 shadow-[inset_2px_0_0_0_#f4f4f5]' : ''}`}>
               <div className="min-w-0"><h2 id={proxySectionID(proxy.name)} tabIndex={-1} className="m-0 text-base font-semibold text-zinc-100 outline-none">{proxy.name}</h2><p className="mt-1 mb-0 font-mono text-[11px] text-zinc-400">{proxy.protocol} · {proxy.listen} · {groupFilters.length} {groupFilters.length === 1 ? 'filter' : 'filters'}</p></div>
-              <button type="button" className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => { setRemovalNotice(undefined); setEditor({ mode: 'create', proxy }) }}>Add filter</button>
+              <button type="button" className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => setEditor({ mode: 'create', proxy })}>Add filter</button>
             </header>
             {groupFilters.length === 0 && <p className="m-0 border-t border-zinc-700 px-5 py-4 text-sm text-zinc-400">No filters attached.</p>}
-            {groupFilters.map((filter) => <FilterRow key={filter.name} filter={filter} isRemoving={remove.isPending} onEdit={filter.editable ? () => { setRemovalNotice(undefined); setEditor({ mode: 'edit', proxyName: proxy.name, filterName: filter.name }) } : undefined} onRemove={() => confirmRemove(proxy, filter)} />)}
+            {groupFilters.map((filter) => <FilterRow key={filter.name} filter={filter} isRemoving={remove.isPending} onEdit={filter.editable ? () => setEditor({ mode: 'edit', proxyName: proxy.name, filterName: filter.name }) : undefined} onRemove={() => confirmRemove(proxy, filter)} />)}
             {currentEditor}
           </section>
         })}

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { createProxy, deleteProxy, getFilters, getProxies, isUnauthorized, proxyDefinitionSchema, replaceProxy, type FilterView, type ProxyDefinition, type ProxyView } from '../lib/api'
 import { queryClient } from '../lib/query-client'
+import { toast } from 'sonner'
 
 // ProxiesPageProps contains the callback used when any management request expires.
 interface ProxiesPageProps {
@@ -31,9 +32,21 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['proxies'] })
   }
-  const create = useMutation({ mutationFn: createProxy, onSuccess: refresh })
-  const replace = useMutation({ mutationFn: ({ name, definition }: { name: string, definition: ProxyDefinition }) => replaceProxy(name, definition), onSuccess: refresh })
-  const remove = useMutation({ mutationFn: deleteProxy, onSuccess: async () => { setSelectedName(undefined); setIsCreating(false); setSearchParams({}); await refresh() } })
+  const create = useMutation({
+    mutationFn: createProxy,
+    onSuccess: async (proxy) => { await refresh(); toast.success('Proxy created', { description: `${proxy.name} is ready to manage.` }) },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not create proxy', { description: 'Check the values and try again.' }) },
+  })
+  const replace = useMutation({
+    mutationFn: ({ name, definition }: { name: string, definition: ProxyDefinition }) => replaceProxy(name, definition),
+    onSuccess: async (_, { name }) => { await refresh(); toast.success('Proxy saved', { description: `${name} was updated.` }) },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not save proxy', { description: 'Check the values and try again.' }) },
+  })
+  const remove = useMutation({
+    mutationFn: deleteProxy,
+    onSuccess: async (_, name) => { setSelectedName(undefined); setIsCreating(false); setSearchParams({}); await refresh(); toast.success('Proxy removed', { description: `${name} was removed.` }) },
+    onError: (error) => { if (!isUnauthorized(error)) toast.error('Could not remove proxy', { description: 'Try again in a moment.' }) },
+  })
 
   useEffect(() => {
     if (isUnauthorized(proxies.error) || isUnauthorized(filters.error) || isUnauthorized(create.error) || isUnauthorized(replace.error) || isUnauthorized(remove.error)) {
@@ -75,7 +88,6 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
     }
   }
 
-  const mutationError = [create.error, replace.error, remove.error].find(Boolean)
   return (
     <main className="mx-auto w-full max-w-[1440px] px-8 pt-14 pb-8 max-lg:px-6 max-lg:pt-10 max-lg:pb-6 max-sm:px-4 max-sm:pt-8 max-sm:pb-4">
       <header className="flex min-h-26 items-end justify-between gap-4 border-b border-zinc-700 pb-6 max-sm:min-h-0 max-sm:items-start">
@@ -94,7 +106,6 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
         </section>
         {showEditor && <section className="p-6" aria-labelledby="proxy-editor-heading">
           <h2 id="proxy-editor-heading" tabIndex={-1} className="m-0 mb-5 text-base font-semibold text-zinc-100 outline-none">{selected ? `Edit ${selected.name}` : 'Add proxy'}</h2>
-          {mutationError && !isUnauthorized(mutationError) && <p className="m-0 mb-5 text-sm text-zinc-200">Unable to save this proxy. Check the values and try again.</p>}
           <ProxyEditor
             key={selected?.name ?? 'new'}
             initial={selected ? toDefinition(selected) : emptyProxy}
@@ -165,6 +176,7 @@ function ProxyEditor({ initial, isExisting, isSaving, isDeleting, onSave, onDele
     const parsed = proxyDefinitionSchema.safeParse(draft)
     if (!parsed.success) {
       setValidationError('Name, listen address, and upstream are required.')
+      toast.error('Proxy details are incomplete', { description: 'Name, listen address, and upstream are required.' })
       return
     }
     await onSave(parsed.data)

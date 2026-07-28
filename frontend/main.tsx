@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import './styles/index.css'
 import App from './app/App.tsx'
 import { queryClient } from './lib/query-client.ts'
+import { Toaster } from './components/ui/sonner.tsx'
 
 // Mount the client-rendered dashboard with shared query state and browser routing.
 createRoot(document.getElementById('root')!).render(
@@ -12,6 +13,7 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <App />
+        <Toaster />
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

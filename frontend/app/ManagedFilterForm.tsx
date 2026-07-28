@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { availableFields, filterDirectionSchema, filterProtocolSchema, labelForField, managedFilterDraftSchema, matchOperatorSchema, type FilterDirection, type FilterProtocol, type ManagedFilterDraft, type MatchField } from './managed-filter-form'
+import { toast } from 'sonner'
 
 interface ManagedFilterFormProps {
   initial: ManagedFilterDraft
@@ -54,7 +55,9 @@ export function ManagedFilterForm({ initial, isExisting, assignedProxies = [], i
     event.preventDefault()
     const parsed = managedFilterDraftSchema.safeParse(draft)
     if (!parsed.success) {
-      setValidationError(parsed.error.issues[0]?.message ?? 'Check the filter configuration and try again.')
+      const message = parsed.error.issues[0]?.message ?? 'Check the filter configuration and try again.'
+      setValidationError(message)
+      toast.error('Filter details are invalid', { description: message })
       return
     }
     await onSave(parsed.data)
