@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { APIError, applyScanConfiguration, getManagedDeployments, isUnauthorized, restoreManagedDeployments, type ScanCandidate, type ScanDiscovery } from '../lib/api'
+import { applyScanConfiguration, getManagedDeployments, isUnauthorized, restoreManagedDeployments, type ScanCandidate, type ScanDiscovery } from '../lib/api'
 import { queryClient } from '../lib/query-client'
 import { toast } from 'sonner'
 
@@ -60,7 +60,10 @@ export function ScanAndConfigureModal({ discovery, onClose, onUnauthorized, open
   }, [apply.isPending, onClose, open, restore.isPending])
 
   const selectedCount = Object.values(choices).filter((choice) => choice.selected).length
-  const update = (candidate: ScanCandidate, value: Partial<Choice>) => setChoices((current) => ({ ...current, [candidate.id]: { selected: false, protocol: 'tcp', scheme: 'http', ...current[candidate.id], ...value } }))
+  const update = (candidate: ScanCandidate, value: Partial<Choice>) => setChoices((current) => {
+    const choice = current[candidate.id] ?? { selected: false, protocol: 'tcp' as const, scheme: 'http' as const }
+    return { ...current, [candidate.id]: { ...choice, ...value } }
+  })
 
   if (!open) return null
   return <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !apply.isPending && !restore.isPending) onClose() }}>
