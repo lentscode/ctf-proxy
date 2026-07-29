@@ -106,23 +106,21 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
       {proxies.data?.length === 0 && <p className="m-0 py-6 text-sm text-zinc-400">No proxies configured.</p>}
       {filters.isError && !isUnauthorized(filters.error) && <p className="m-0 border-b border-zinc-700 py-4 text-sm text-zinc-400">Filter metadata is unavailable. Attached filters can still be detached.</p>}
       <div className="grid divide-y divide-zinc-700">
-        {proxies.data?.map((proxy) => {
-          const groupFilters = proxy.filters.map((name) => filtersByName.get(name) ?? unavailableFilter(name))
-          const currentEditor = editor?.mode === 'create' && editor.proxy.name === proxy.name
-              ? <ManagedFilterForm key={`create-${proxy.name}`} initial={createEmptyDraft(proxy.protocol)} isExisting={false} isSaving={create.isPending} onSave={async (draft) => { await create.mutateAsync({ proxyName: proxy.name, draft }) }} onCancel={() => setEditor(undefined)} />
-            : editor?.mode === 'edit' && editor.proxyName === proxy.name
-              ? <ManagedEditor filterName={editor.filterName} managed={managed} isSaving={replace.isPending} onSave={async (draft) => { await replace.mutateAsync({ name: editor.filterName, draft }) }} onCancel={() => setEditor(undefined)} />
-              : undefined
-          return <section key={proxy.name} className="scroll-mt-6" aria-labelledby={proxySectionID(proxy.name)}>
-            <header className={`flex items-center gap-4 bg-zinc-900/45 px-5 py-5 max-sm:items-start ${focusedProxy === proxy.name ? 'bg-zinc-900/75 shadow-[inset_2px_0_0_0_#f4f4f5]' : ''}`}>
-              <div className="min-w-0"><h2 id={proxySectionID(proxy.name)} tabIndex={-1} className="m-0 text-base font-semibold text-zinc-100 outline-none">{proxy.name}</h2><p className="mt-1 mb-0 font-mono text-[11px] text-zinc-400">{proxy.protocol} · {proxy.listen} · {groupFilters.length} {groupFilters.length === 1 ? 'filter' : 'filters'}</p></div>
-              <button type="button" className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => setEditor({ mode: 'create', proxy })}>Add filter</button>
-            </header>
-            {groupFilters.length === 0 && <p className="m-0 border-t border-zinc-700 px-5 py-4 text-sm text-zinc-400">No filters attached.</p>}
-            {groupFilters.map((filter) => <FilterRow key={filter.name} filter={filter} isRemoving={remove.isPending} onEdit={filter.editable ? () => setEditor({ mode: 'edit', proxyName: proxy.name, filterName: filter.name }) : undefined} onRemove={() => confirmRemove(proxy, filter)} />)}
-            {currentEditor}
-          </section>
-        })}
+        {proxies.data?.map((proxy) => <ProxyFilterSection
+          key={proxy.name}
+          proxy={proxy}
+          filtersByName={filtersByName}
+          editor={editor}
+          focused={focusedProxy === proxy.name}
+          managed={managed}
+          isCreating={create.isPending}
+          isSaving={replace.isPending}
+          isRemoving={remove.isPending}
+          onCreate={(draft) => create.mutateAsync({ proxyName: proxy.name, draft })}
+          onSave={(name, draft) => replace.mutateAsync({ name, draft })}
+          onEditorChange={setEditor}
+          onRemove={confirmRemove}
+        />)}
       </div>
       {!filters.isError && unassignedFilters.length > 0 && <section className="mt-8 border border-zinc-700" aria-labelledby="unassigned-filters">
         <header className="px-5 py-5">
@@ -133,6 +131,30 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
       </section>}
     </main>
   )
+}
+
+function ProxyFilterSection({ proxy, filtersByName, editor, focused, managed, isCreating, isSaving, isRemoving, onCreate, onSave, onEditorChange, onRemove }: {
+  proxy: ProxyView
+  filtersByName: Map<string, FilterView>
+  editor: Editor
+  focused: boolean
+  managed: UseQueryResult<ManagedFilterView, Error>
+  isCreating: boolean
+  isSaving: boolean
+  isRemoving: boolean
+  onCreate: (draft: ManagedFilterDraft) => Promise<unknown>
+  onSave: (name: string, draft: ManagedFilterDraft) => Promise<unknown>
+  onEditorChange: (editor: Editor) => void
+  onRemove: (proxy: ProxyView, filter: FilterView) => void
+}) {
+  const groupFilters = proxy.filters.map((name) => filtersByName.get(name) ?? unavailableFilter(name))
+  const currentEditor = editor?.mode === 'create' && editor.proxy.name === proxy.name
+    ? <ManagedFilterForm key={`create-${proxy.name}`} initial={createEmptyDraft(proxy.protocol)} isExisting={false} isSaving={isCreating} onSave={async (draft) => { await onCreate(draft) }} onCancel={() => onEditorChange(undefined)} />
+    : editor?.mode === 'edit' && editor.proxyName === proxy.name
+      ? <ManagedEditor filterName={editor.filterName} managed={managed} isSaving={isSaving} onSave={async (draft) => { await onSave(editor.filterName, draft) }} onCancel={() => onEditorChange(undefined)} />
+      : undefined
+
+  return <section className="scroll-mt-6" aria-labelledby={proxySectionID(proxy.name)}><header className={`flex items-center gap-4 bg-zinc-900/45 px-5 py-5 max-sm:items-start ${focused ? 'bg-zinc-900/75 shadow-[inset_2px_0_0_0_#f4f4f5]' : ''}`}><div className="min-w-0"><h2 id={proxySectionID(proxy.name)} tabIndex={-1} className="m-0 text-base font-semibold text-zinc-100 outline-none">{proxy.name}</h2><p className="mt-1 mb-0 font-mono text-[11px] text-zinc-400">{proxy.protocol} · {proxy.listen} · {groupFilters.length} {groupFilters.length === 1 ? 'filter' : 'filters'}</p></div><button type="button" className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900" onClick={() => onEditorChange({ mode: 'create', proxy })}>Add filter</button></header>{groupFilters.length === 0 && <p className="m-0 border-t border-zinc-700 px-5 py-4 text-sm text-zinc-400">No filters attached.</p>}{groupFilters.map((filter) => <FilterRow key={filter.name} filter={filter} isRemoving={isRemoving} onEdit={filter.editable ? () => onEditorChange({ mode: 'edit', proxyName: proxy.name, filterName: filter.name }) : undefined} onRemove={() => onRemove(proxy, filter)} />)}{currentEditor}</section>
 }
 
 function ManagedEditor({ filterName, managed, isSaving, saveError, onSave, onCancel }: {

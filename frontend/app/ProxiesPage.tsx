@@ -189,39 +189,44 @@ function ProxyEditor({ initial, isExisting, isSaving, isDeleting, onSave, onDele
 
   return (
     <form className="grid gap-6" onSubmit={(event) => void submit(event)}>
-      <div className="grid grid-cols-2 gap-4 max-sm:grid-cols-1">
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Name<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:opacity-60" value={draft.name} onChange={(event) => update('name', event.target.value)} disabled={isExisting} required /></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Protocol<select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.protocol} onChange={(event) => update('protocol', event.target.value as ProxyDefinition['protocol'])}><option value="tcp">TCP</option><option value="http">HTTP</option></select></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Listen<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.listen} onChange={(event) => update('listen', event.target.value)} placeholder="127.0.0.1:31337" required /></label>
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Upstream<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.upstream} onChange={(event) => update('upstream', event.target.value)} placeholder="127.0.0.1:31338" required /></label>
-      </div>
-      <label className="flex items-center gap-2 text-sm text-zinc-100"><input className="accent-zinc-200" type="checkbox" checked={draft.active} onChange={(event) => update('active', event.target.checked)} /> Start active</label>
-      <fieldset className="grid gap-3 border-t border-zinc-700 pt-5">
-        <legend className="px-0 text-sm font-semibold text-zinc-100">Filters</legend>
-        <p className="m-0 text-xs leading-relaxed text-zinc-400">Choose from every available filter. The dropdown shows where each filter is already used; a filter can be shared by multiple proxies.</p>
-        {filtersUnavailable && <p className="m-0 text-xs text-zinc-400" role="alert">Available filters could not be loaded. Existing assignments are unchanged.</p>}
-        {!filtersUnavailable && <div className="flex gap-2 max-sm:flex-col">
-          <select aria-label="Available filters" className="h-10 min-w-0 flex-1 rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={selectedFilter} onChange={(event) => setSelectedFilter(event.target.value)}>
-            <option value="">Select a filter to attach</option>
-            {filters.map((filter) => {
-              const attached = draft.filters.includes(filter.name)
-              const compatible = filter.protocols.includes(draft.protocol)
-              return <option key={filter.name} value={filter.name} disabled={attached || !compatible}>{filterOptionLabel(filter, assignments.get(filter.name) ?? [], attached, compatible, draft.protocol)}</option>
-            })}
-          </select>
-          <button type="button" className="min-h-10 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={addFilter} disabled={!selectedFilter}>Attach filter</button>
-        </div>}
-        {draft.filters.length === 0
-          ? <p className="m-0 text-sm text-zinc-400">No filters attached.</p>
-          : <ul className="m-0 grid list-none gap-2 p-0">{draft.filters.map((name) => <li key={name} className="flex items-center justify-between gap-3 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2"><span className="min-w-0 break-words font-mono text-xs text-zinc-200">{name}</span><button type="button" className="shrink-0 cursor-pointer bg-transparent p-0 text-xs font-semibold text-zinc-400 underline underline-offset-3 transition hover:text-zinc-100" onClick={() => removeFilter(name)}>Detach</button></li>)}</ul>}
-      </fieldset>
+      <ProxyDetailsFields draft={draft} isExisting={isExisting} onUpdate={update} />
+      <FilterAssignments
+        draft={draft}
+        filters={filters}
+        filtersUnavailable={filtersUnavailable}
+        assignments={assignments}
+        selectedFilter={selectedFilter}
+        onSelectedFilterChange={setSelectedFilter}
+        onAttach={addFilter}
+        onDetach={removeFilter}
+      />
       {validationError && <p className="m-0 text-sm text-zinc-200" role="alert">{validationError}</p>}
-      <div className="flex items-center gap-2 border-t border-zinc-700 pt-1">
-        <button type="submit" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save proxy'}</button>
-        {onDelete && <button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60 ml-auto" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Removing…' : 'Remove proxy'}</button>}
-      </div>
+      <ProxyEditorActions isSaving={isSaving} isDeleting={isDeleting} onDelete={onDelete} />
     </form>
   )
+}
+
+function ProxyDetailsFields({ draft, isExisting, onUpdate }: { draft: ProxyDefinition, isExisting: boolean, onUpdate: <K extends keyof ProxyDefinition>(key: K, value: ProxyDefinition[K]) => void }) {
+  return <><div className="grid grid-cols-2 gap-4 max-sm:grid-cols-1"><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Name<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:opacity-60" value={draft.name} onChange={(event) => onUpdate('name', event.target.value)} disabled={isExisting} required /></label><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Protocol<select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.protocol} onChange={(event) => onUpdate('protocol', event.target.value as ProxyDefinition['protocol'])}><option value="tcp">TCP</option><option value="http">HTTP</option></select></label><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Listen<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.listen} onChange={(event) => onUpdate('listen', event.target.value)} placeholder="127.0.0.1:31337" required /></label><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Upstream<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.upstream} onChange={(event) => onUpdate('upstream', event.target.value)} placeholder="127.0.0.1:31338" required /></label></div><label className="flex items-center gap-2 text-sm text-zinc-100"><input className="accent-zinc-200" type="checkbox" checked={draft.active} onChange={(event) => onUpdate('active', event.target.checked)} /> Start active</label></>
+}
+
+function FilterAssignments({ draft, filters, filtersUnavailable, assignments, selectedFilter, onSelectedFilterChange, onAttach, onDetach }: { draft: ProxyDefinition, filters: FilterView[], filtersUnavailable: boolean, assignments: Map<string, string[]>, selectedFilter: string, onSelectedFilterChange: (value: string) => void, onAttach: () => void, onDetach: (name: string) => void }) {
+  return <fieldset className="grid gap-3 border-t border-zinc-700 pt-5"><legend className="px-0 text-sm font-semibold text-zinc-100">Filters</legend><p className="m-0 text-xs leading-relaxed text-zinc-400">Choose from every available filter. The dropdown shows where each filter is already used; a filter can be shared by multiple proxies.</p>{filtersUnavailable && <p className="m-0 text-xs text-zinc-400" role="alert">Available filters could not be loaded. Existing assignments are unchanged.</p>}{!filtersUnavailable && <div className="flex gap-2 max-sm:flex-col"><select aria-label="Available filters" className="h-10 min-w-0 flex-1 rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={selectedFilter} onChange={(event) => onSelectedFilterChange(event.target.value)}><option value="">Select a filter to attach</option>{filters.map((filter) => <FilterOption key={filter.name} filter={filter} draft={draft} assignments={assignments} />)}</select><button type="button" className="min-h-10 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={onAttach} disabled={!selectedFilter}>Attach filter</button></div>}<AttachedFilters names={draft.filters} onDetach={onDetach} /></fieldset>
+}
+
+function FilterOption({ filter, draft, assignments }: { filter: FilterView, draft: ProxyDefinition, assignments: Map<string, string[]> }) {
+  const attached = draft.filters.includes(filter.name)
+  const compatible = filter.protocols.includes(draft.protocol)
+  return <option value={filter.name} disabled={attached || !compatible}>{filterOptionLabel(filter, assignments.get(filter.name) ?? [], attached, compatible, draft.protocol)}</option>
+}
+
+function AttachedFilters({ names, onDetach }: { names: string[], onDetach: (name: string) => void }) {
+  if (names.length === 0) return <p className="m-0 text-sm text-zinc-400">No filters attached.</p>
+  return <ul className="m-0 grid list-none gap-2 p-0">{names.map((name) => <li key={name} className="flex items-center justify-between gap-3 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2"><span className="min-w-0 break-words font-mono text-xs text-zinc-200">{name}</span><button type="button" className="shrink-0 cursor-pointer bg-transparent p-0 text-xs font-semibold text-zinc-400 underline underline-offset-3 transition hover:text-zinc-100" onClick={() => onDetach(name)}>Detach</button></li>)}</ul>
+}
+
+function ProxyEditorActions({ isSaving, isDeleting, onDelete }: { isSaving: boolean, isDeleting: boolean, onDelete?: () => void }) {
+  return <div className="flex items-center gap-2 border-t border-zinc-700 pt-1"><button type="submit" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save proxy'}</button>{onDelete && <button type="button" className="ml-auto min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Removing…' : 'Remove proxy'}</button>}</div>
 }
 
 // toDefinition removes runtime-only proxy state before populating the editor.

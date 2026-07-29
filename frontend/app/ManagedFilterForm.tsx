@@ -65,39 +65,29 @@ export function ManagedFilterForm({ initial, isExisting, assignedProxies = [], i
 
   return (
     <form className="grid gap-5 border-t border-zinc-700 px-5 py-5" onSubmit={(event) => void submit(event)}>
-      <div className="grid gap-1">
-        <h3 className="m-0 text-sm font-semibold text-zinc-100">{isExisting ? `Edit ${initial.name}` : 'Add managed filter'}</h3>
-        <p className="m-0 text-xs leading-relaxed text-zinc-400">This rule rejects traffic only when every condition below matches.</p>
-      </div>
-      {assignedProxies.length > 1 && <p className="m-0 border-l-2 border-zinc-300 bg-zinc-900 px-3 py-2 text-xs leading-relaxed text-zinc-200" role="note">This filter is shared by {assignedProxies.length} proxies. Saving updates and restarts every assigned proxy: {assignedProxies.join(', ')}.</p>}
-      <div className="grid grid-cols-3 gap-4 max-sm:grid-cols-1">
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Filter name
-          <input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:opacity-60" value={draft.name} onChange={(event) => { setDraft((current) => ({ ...current, name: event.target.value })); setValidationError(undefined) }} disabled={isExisting} required />
-        </label>
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Protocol
-          <select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.protocol} onChange={(event) => updateProtocol(filterProtocolSchema.parse(event.target.value))}>
-            <option value="tcp">TCP</option><option value="http">HTTP</option>
-          </select>
-        </label>
-        <label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Direction
-          <select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.direction} onChange={(event) => updateDirection(filterDirectionSchema.parse(event.target.value))}>
-            <option value="request">Request</option><option value="response">Response</option>
-          </select>
-        </label>
-      </div>
-      <label className="flex items-center gap-2 text-sm text-zinc-100"><input className="accent-zinc-200" type="checkbox" checked={draft.active} onChange={(event) => { setDraft((current) => ({ ...current, active: event.target.checked })); setValidationError(undefined) }} /> Enable this filter</label>
-      <fieldset className="grid gap-3 border-0 p-0">
-        <legend className="text-xs font-semibold text-zinc-400">All-match conditions</legend>
-        {draft.conditions.map((condition, index) => <ConditionEditor key={index} condition={condition} index={index} protocol={draft.protocol} direction={draft.direction} canRemove={draft.conditions.length > 1} onUpdate={(update) => updateCondition(index, update)} onRemove={() => removeCondition(index)} />)}
-        <button type="button" className="justify-self-start cursor-pointer bg-transparent p-0 text-xs font-semibold text-zinc-200 underline underline-offset-3" onClick={addCondition}>Add condition</button>
-      </fieldset>
+      <ManagedFilterIntroduction isExisting={isExisting} name={initial.name} assignedProxies={assignedProxies} />
+      <ManagedFilterSettings draft={draft} isExisting={isExisting} onNameChange={(name) => { setDraft((current) => ({ ...current, name })); setValidationError(undefined) }} onProtocolChange={updateProtocol} onDirectionChange={updateDirection} onActiveChange={(active) => { setDraft((current) => ({ ...current, active })); setValidationError(undefined) }} />
+      <ManagedFilterConditions draft={draft} onUpdate={updateCondition} onRemove={removeCondition} onAdd={addCondition} />
       {(validationError || saveError) && <p className="m-0 text-sm text-zinc-200" role="alert">{validationError ?? saveError}</p>}
-      <div className="flex items-center gap-2 border-t border-zinc-700 pt-4">
-        <button type="submit" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60" disabled={isSaving}>{isSaving ? 'Saving…' : isExisting ? 'Save filter' : 'Create filter'}</button>
-        <button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60" onClick={onCancel} disabled={isSaving}>Cancel</button>
-      </div>
+      <ManagedFilterActions isSaving={isSaving} isExisting={isExisting} onCancel={onCancel} />
     </form>
   )
+}
+
+function ManagedFilterIntroduction({ isExisting, name, assignedProxies }: { isExisting: boolean, name: string, assignedProxies: string[] }) {
+  return <><div className="grid gap-1"><h3 className="m-0 text-sm font-semibold text-zinc-100">{isExisting ? `Edit ${name}` : 'Add managed filter'}</h3><p className="m-0 text-xs leading-relaxed text-zinc-400">This rule rejects traffic only when every condition below matches.</p></div>{assignedProxies.length > 1 && <p className="m-0 border-l-2 border-zinc-300 bg-zinc-900 px-3 py-2 text-xs leading-relaxed text-zinc-200" role="note">This filter is shared by {assignedProxies.length} proxies. Saving updates and restarts every assigned proxy: {assignedProxies.join(', ')}.</p>}</>
+}
+
+function ManagedFilterSettings({ draft, isExisting, onNameChange, onProtocolChange, onDirectionChange, onActiveChange }: { draft: ManagedFilterDraft, isExisting: boolean, onNameChange: (name: string) => void, onProtocolChange: (protocol: FilterProtocol) => void, onDirectionChange: (direction: FilterDirection) => void, onActiveChange: (active: boolean) => void }) {
+  return <><div className="grid grid-cols-3 gap-4 max-sm:grid-cols-1"><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Filter name<input className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:opacity-60" value={draft.name} onChange={(event) => onNameChange(event.target.value)} disabled={isExisting} required /></label><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Protocol<select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.protocol} onChange={(event) => onProtocolChange(filterProtocolSchema.parse(event.target.value))}><option value="tcp">TCP</option><option value="http">HTTP</option></select></label><label className="grid gap-1.5 text-xs font-semibold text-zinc-400">Direction<select className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10" value={draft.direction} onChange={(event) => onDirectionChange(filterDirectionSchema.parse(event.target.value))}><option value="request">Request</option><option value="response">Response</option></select></label></div><label className="flex items-center gap-2 text-sm text-zinc-100"><input className="accent-zinc-200" type="checkbox" checked={draft.active} onChange={(event) => onActiveChange(event.target.checked)} /> Enable this filter</label></>
+}
+
+function ManagedFilterConditions({ draft, onUpdate, onRemove, onAdd }: { draft: ManagedFilterDraft, onUpdate: (index: number, update: Partial<ManagedFilterDraft['conditions'][number]>) => void, onRemove: (index: number) => void, onAdd: () => void }) {
+  return <fieldset className="grid gap-3 border-0 p-0"><legend className="text-xs font-semibold text-zinc-400">All-match conditions</legend>{draft.conditions.map((condition, index) => <ConditionEditor key={index} condition={condition} index={index} protocol={draft.protocol} direction={draft.direction} canRemove={draft.conditions.length > 1} onUpdate={(update) => onUpdate(index, update)} onRemove={() => onRemove(index)} />)}<button type="button" className="justify-self-start cursor-pointer bg-transparent p-0 text-xs font-semibold text-zinc-200 underline underline-offset-3" onClick={onAdd}>Add condition</button></fieldset>
+}
+
+function ManagedFilterActions({ isSaving, isExisting, onCancel }: { isSaving: boolean, isExisting: boolean, onCancel: () => void }) {
+  return <div className="flex items-center gap-2 border-t border-zinc-700 pt-4"><button type="submit" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60" disabled={isSaving}>{isSaving ? 'Saving…' : isExisting ? 'Save filter' : 'Create filter'}</button><button type="button" className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60" onClick={onCancel} disabled={isSaving}>Cancel</button></div>
 }
 
 function ConditionEditor({ condition, index, protocol, direction, canRemove, onUpdate, onRemove }: {
