@@ -17,7 +17,9 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "test:lab": "go test -tags=docker ./test/lab -run TestRealWorldLab -count=1 -v",
-    "test:lab:keep": "CTF_PROXY_LAB_KEEP=1 go test -tags=docker ./test/lab -run TestRealWorldLab -count=1 -v"
+    "test:lab:keep": "CTF_PROXY_LAB_KEEP=1 go test -tags=docker ./test/lab -run TestRealWorldLab -count=1 -v",
+    "lab:up": "go run ./cmd/lab",
+    "lab:up:keep": "CTF_PROXY_LAB_KEEP=1 go run ./cmd/lab"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",

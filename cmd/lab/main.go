@@ -1,0 +1,287 @@
+// Command lab starts a disposable, interactive real-world CTF proxy lab.
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+	"time"
+)
+
+var services = []string{"tcp-echo", "tcp-archive", "http-login", "http-template"}
+
+type environment struct {
+	repo     string
+	root     string
+	stage    string
+	binary   string
+	token    string
+	control  int
+	ports    map[string]int
+	projects map[string]string
+	proxy    *exec.Cmd
+}
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "ctf-proxy lab:", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) (result error) {
+	if err := preflight(); err != nil {
+		return err
+	}
+	repo, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get working directory: %w", err)
+	}
+	root, err := os.MkdirTemp("", "ctf-proxy-interactive-lab-")
+	if err != nil {
+		return fmt.Errorf("create lab directory: %w", err)
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return fmt.Errorf("protect lab directory: %w", err)
+	}
+	control, err := freePort()
+	if err != nil {
+		return fmt.Errorf("allocate control port: %w", err)
+	}
+	token, err := randomToken()
+	if err != nil {
+		return fmt.Errorf("generate control token: %w", err)
+	}
+	env := &environment{repo: repo, root: root, stage: filepath.Join(root, "services"), binary: filepath.Join(root, "ctf-proxy"), token: token, control: control, ports: map[string]int{}, projects: map[string]string{}}
+	defer func() {
+		env.cleanup()
+		if result == nil && os.Getenv("CTF_PROXY_LAB_KEEP") != "1" {
+			_ = os.RemoveAll(root)
+		} else {
+			fmt.Fprintf(os.Stderr, "Lab artifacts preserved at %s\n", root)
+		}
+	}()
+	if err := env.start(); err != nil {
+		return err
+	}
+	env.printInstructions()
+
+	done := make(chan error, 1)
+	go func() { done <- env.proxy.Wait() }()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("ctf-proxy stopped unexpectedly: %w", err)
+		}
+		return errors.New("ctf-proxy stopped unexpectedly")
+	}
+}
+
+func preflight() error {
+	for _, command := range [][]string{{"docker", "compose", "version"}, {"python3", "--version"}, {"pnpm", "--version"}} {
+		if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
+			return fmt.Errorf("requires %s: %w (%s)", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
+		}
+	}
+	return nil
+}
+
+func (e *environment) start() error {
+	if err := os.MkdirAll(e.stage, 0o700); err != nil {
+		return err
+	}
+	for _, service := range services {
+		port, err := freePort()
+		if err != nil {
+			return err
+		}
+		e.ports[service] = port
+		target := filepath.Join(e.stage, service)
+		if err := copyDir(filepath.Join(e.repo, "test", "lab", "services", service), target); err != nil {
+			return fmt.Errorf("stage %s: %w", service, err)
+		}
+		compose := filepath.Join(target, "compose.yaml")
+		if err := rewritePort(compose, port); err != nil {
+			return fmt.Errorf("stage %s port: %w", service, err)
+		}
+		project := fmt.Sprintf("ctf_proxy_interactive_%d_%s", time.Now().UnixNano(), strings.ReplaceAll(service, "-", "_"))
+		e.projects[service] = project
+		if err := rewriteProject(compose, project); err != nil {
+			return fmt.Errorf("stage %s project: %w", service, err)
+		}
+		if err := command(e.repo, nil, "docker", "compose", "--file", compose, "up", "--build", "--detach"); err != nil {
+			return err
+		}
+		if err := waitPort(port); err != nil {
+			return fmt.Errorf("wait for %s: %w", service, err)
+		}
+	}
+	if err := command(e.repo, nil, "pnpm", "run", "build:frontend"); err != nil {
+		return err
+	}
+	if err := command(e.repo, nil, "go", "build", "-tags", "production", "-o", e.binary, "./cmd/ctf-proxy"); err != nil {
+		return err
+	}
+	config, tokens := filepath.Join(e.root, "ctf-proxy.yaml"), filepath.Join(e.root, ".tokens")
+	if err := os.WriteFile(config, []byte("version: 1\nproxies: []\n"), 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(tokens, []byte(e.token+"\n"), 0o600); err != nil {
+		return err
+	}
+	e.proxy = exec.Command(e.binary)
+	e.proxy.Dir = e.root
+	e.proxy.Env = append(os.Environ(), "CTF_PROXY_CONFIG="+config, "CTF_PROXY_TOKENS_FILE="+tokens, fmt.Sprintf("CTF_PROXY_CONTROL_ADDR=127.0.0.1:%d", e.control), "CTF_PROXY_COMPOSE_ROOT="+e.stage)
+	e.proxy.Stdout, e.proxy.Stderr = os.Stdout, os.Stderr
+	if err := e.proxy.Start(); err != nil {
+		return err
+	}
+	return e.waitHealth()
+}
+
+func (e *environment) cleanup() {
+	if e.proxy != nil && e.proxy.Process != nil {
+		_ = e.proxy.Process.Signal(os.Interrupt)
+	}
+	for service := range e.projects {
+		compose := filepath.Join(e.stage, service, "compose.yaml")
+		_ = command(e.repo, nil, "docker", "compose", "--file", compose, "down", "--volumes", "--remove-orphans")
+	}
+}
+
+func (e *environment) waitHealth() error {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		request, _ := http.NewRequest(http.MethodGet, e.baseURL()+"/healthz", nil)
+		request.Header.Set("Authorization", "Bearer "+e.token)
+		response, err := http.DefaultClient.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("control API did not become healthy")
+}
+
+func (e *environment) baseURL() string { return fmt.Sprintf("http://127.0.0.1:%d", e.control) }
+
+func (e *environment) printInstructions() {
+	fmt.Printf("\nInteractive ctf-proxy lab is running.\n\nDashboard: %s\nControl token: %s\nLab directory: %s\n\n", e.baseURL(), e.token, e.root)
+	fmt.Println("Initially each fixture is directly exposed. In the dashboard, open Proxies, choose Scan and configure, select all four services, then Apply.")
+	fmt.Println("After takeover, the same ports are mediated by ctf-proxy. Add filters in the Filters view and watch Events in the dashboard.")
+	fmt.Println("\nFixture endpoints and example clients:")
+	fmt.Printf("  TCP echo:      127.0.0.1:%d  python3 test/lab/services/tcp-echo/client.py --host 127.0.0.1 --port %d --admin\n", e.ports["tcp-echo"], e.ports["tcp-echo"])
+	fmt.Printf("  TCP archive:   127.0.0.1:%d  python3 test/lab/services/tcp-archive/client.py --host 127.0.0.1 --port %d --exploit\n", e.ports["tcp-archive"], e.ports["tcp-archive"])
+	fmt.Printf("  HTTP login:    127.0.0.1:%d  python3 test/lab/services/http-login/client.py --host 127.0.0.1 --port %d --admin-exploit\n", e.ports["http-login"], e.ports["http-login"])
+	fmt.Printf("  HTTP template: 127.0.0.1:%d  python3 test/lab/services/http-template/client.py --host 127.0.0.1 --port %d --exploit\n", e.ports["http-template"], e.ports["http-template"])
+	fmt.Println("\nPress Ctrl-C to stop the proxy and remove the disposable Docker projects.")
+}
+
+func command(dir string, env []string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir, cmd.Env = dir, append(os.Environ(), env...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, output)
+	}
+	return nil
+}
+
+func freePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
+func waitPort(port int) error {
+	deadline := time.Now().Add(30 * time.Second)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", address, 200*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("%s did not become reachable", address)
+}
+
+func randomToken() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func rewritePort(path string, port int) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	updated := regexp.MustCompile(`0\.0\.0\.0:\d+:`).ReplaceAllString(string(b), fmt.Sprintf("0.0.0.0:%d:", port))
+	if updated == string(b) {
+		return errors.New("published port mapping not found")
+	}
+	return os.WriteFile(path, []byte(updated), 0o600)
+}
+
+func rewriteProject(path, project string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(string(b), "name:") {
+		return errors.New("fixture unexpectedly defines a Compose project name")
+	}
+	return os.WriteFile(path, []byte("name: "+project+"\n"+string(b)), 0o600)
+}
+
+func copyDir(source, target string) error {
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		from, to := filepath.Join(source, entry.Name()), filepath.Join(target, entry.Name())
+		if entry.IsDir() {
+			if err := copyDir(from, to); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(from)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(to, data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}

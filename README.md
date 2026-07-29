@@ -70,3 +70,19 @@ pnpm test:lab
 
 Successful runs remove their temporary service root and Docker projects. Use
 `pnpm test:lab:keep` to preserve the temporary artifacts for diagnosis.
+
+### Interactive lab
+
+To inspect the real dashboard and traffic while the lab is running, use:
+
+```sh
+pnpm lab:up
+```
+
+The command prints a dashboard URL, control token, fixture ports, and Python
+client commands. The services begin directly exposed so the intended
+vulnerabilities can be observed. Use **Proxies → Scan and configure** to move
+them behind ctf-proxy, then add filters and watch the Events panel. Press
+`Ctrl-C` to stop the proxy and tear down only the disposable lab containers.
+Use `pnpm lab:up:keep` to retain the generated configuration, staged Compose
+files, and logs after shutdown.
