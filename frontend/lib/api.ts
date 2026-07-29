@@ -85,6 +85,11 @@ export type ScanCandidate = z.infer<typeof composeCandidateSchema>
 export type ScanProject = z.infer<typeof composeProjectSchema>
 export type ManagedDeployment = z.infer<typeof deploymentSchema>
 export type ScanDiscovery = z.infer<typeof composeDiscoverySchema>
+// Compose* aliases preserve the dashboard's operator-facing naming while the
+// API module also exposes the more explicit Scan*/Managed* names above.
+export type ComposeCandidate = ScanCandidate
+export type ComposeProject = ScanProject
+export type ComposeDeployment = ManagedDeployment
 
 // isUnauthorized identifies an expired or invalid bearer-token response.
 export function isUnauthorized(error: unknown): boolean {
@@ -148,6 +153,11 @@ export async function scanProjects(): Promise<z.infer<typeof composeDiscoverySch
 export async function getManagedDeployments(): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/deployments', deploymentsSchema)).deployments }
 export async function applyScanConfiguration(revision: string, selections: Array<{id:string, protocol:'tcp'|'http', scheme?:'http'|'https'}>): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/apply', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,selections})})).deployments }
 export async function restoreManagedDeployments(ids: string[], all = false): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/restore', deploymentsSchema,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,all})})).deployments }
+
+export const discoverCompose = scanProjects
+export const getComposeDeployments = getManagedDeployments
+export const applyCompose = applyScanConfiguration
+export const restoreCompose = restoreManagedDeployments
 
 // getManagedFilter loads the editable source and assignments for one managed filter.
 export async function getManagedFilter(name: string): Promise<ManagedFilterView> {
