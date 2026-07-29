@@ -104,6 +104,7 @@ func DiscoverWithNames(root string, names []string) ([]Project, error) {
 		return nil, fmt.Errorf("read compose root: %w", err)
 	}
 	projects := make([]Project, 0)
+	reservedPorts := make(map[int]struct{})
 	for _, dir := range dirs {
 		if !dir.IsDir() || dir.Type()&os.ModeSymlink != 0 {
 			continue
@@ -117,7 +118,7 @@ func DiscoverWithNames(root string, names []string) ([]Project, error) {
 			if err != nil || !info.Mode().IsRegular() {
 				continue
 			}
-			project, err := discoverFile(path)
+			project, err := discoverFile(path, reservedPorts)
 			if err != nil {
 				projects = append(projects, Project{Name: dir.Name() + " (" + name + ")", ComposeFile: path, Candidates: []Candidate{{ID: id(path, "", -1), Project: dir.Name(), ComposeFile: path, Eligible: false, Reason: "Compose file could not be parsed safely"}}})
 				continue
@@ -151,7 +152,7 @@ func validFileNames(names []string) []string {
 	return valid
 }
 
-func discoverFile(path string) (Project, error) {
+func discoverFile(path string, reservedPorts map[int]struct{}) (Project, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Project{}, err
@@ -199,11 +200,12 @@ func discoverFile(path string) (Project, error) {
 				project.Candidates = append(project.Candidates, candidate)
 				continue
 			}
-			private, err := freePort()
+			private, err := freePort(reservedPorts)
 			if err != nil {
 				return Project{}, err
 			}
 			candidate.Upstream = net.JoinHostPort("127.0.0.1", strconv.Itoa(private))
+			reservedPorts[private] = struct{}{}
 			candidate.Eligible = true
 			project.Candidates = append(project.Candidates, candidate)
 		}
@@ -292,8 +294,11 @@ func publicListen(value string) bool {
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
 }
-func freePort() (int, error) {
+func freePort(reserved map[int]struct{}) (int, error) {
 	for p := 20000; p <= 59999; p++ {
+		if _, exists := reserved[p]; exists {
+			continue
+		}
 		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
 		if err == nil {
 			_ = l.Close()

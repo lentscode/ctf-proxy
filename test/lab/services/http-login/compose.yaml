@@ -1,0 +1,6 @@
+services:
+  http-login:
+    build: .
+    ports:
+      - "0.0.0.0:24103:8080"
+    restart: "no"

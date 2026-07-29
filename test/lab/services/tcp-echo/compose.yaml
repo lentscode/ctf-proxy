@@ -1,0 +1,6 @@
+services:
+  tcp-echo:
+    build: .
+    ports:
+      - "0.0.0.0:24101:9000"
+    restart: "no"

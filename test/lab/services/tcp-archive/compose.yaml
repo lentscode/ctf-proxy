@@ -1,0 +1,6 @@
+services:
+  tcp-archive:
+    build: .
+    ports:
+      - "0.0.0.0:24102:9001"
+    restart: "no"

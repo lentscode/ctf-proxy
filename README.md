@@ -52,3 +52,21 @@ go test -race ./...
 pnpm lint
 pnpm build
 ```
+
+## Real-world Docker lab
+
+The opt-in lab starts four intentionally vulnerable Python fixture services,
+uses the real dashboard to take them over with Docker Compose, and verifies
+real TCP and HTTP traffic through the release binary. It is intended for local
+demonstrations and isolated nightly CI runners; never point it at a shared
+Docker host or a real Compose root.
+
+Prerequisites are Docker Compose v2, Python 3, pnpm, and Playwright Chromium:
+
+```sh
+pnpm exec playwright install chromium
+pnpm test:lab
+```
+
+Successful runs remove their temporary service root and Docker projects. Use
+`pnpm test:lab:keep` to preserve the temporary artifacts for diagnosis.

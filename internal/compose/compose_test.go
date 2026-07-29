@@ -71,6 +71,23 @@ func TestDiscoverPortFormsAndSkipReasons(t *testing.T) {
 	}
 }
 
+func TestDiscoverAssignsDistinctPrivatePortsAcrossProjects(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"first", "second"} {
+		project := filepath.Join(root, name)
+		require.NoError(t, os.Mkdir(project, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(project, ComposeFileName), []byte("services:\n  web:\n    image: example\n    ports: [\"18080:80\"]\n"), 0o600))
+	}
+	projects, err := Discover(root)
+	require.NoError(t, err)
+	require.Len(t, projects, 2)
+	first := projects[0].Candidates[0]
+	second := projects[1].Candidates[0]
+	require.True(t, first.Eligible)
+	require.True(t, second.Eligible)
+	require.NotEqual(t, first.Upstream, second.Upstream)
+}
+
 func indentYAML(value, prefix string) string {
 	return prefix + strings.ReplaceAll(value, "\n", "\n"+prefix)
 }
