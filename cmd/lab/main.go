@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -31,15 +32,20 @@ const (
 )
 
 type environment struct {
-	repo     string
-	root     string
-	stage    string
-	binary   string
-	token    string
-	control  int
-	ports    map[string]int
-	projects map[string]string
-	proxy    *exec.Cmd
+	repo        string
+	root        string
+	stage       string
+	binary      string
+	token       string
+	control     int
+	ports       map[string]int
+	projects    map[string]string
+	proxy       *exec.Cmd
+	proxyDone   chan error
+	proxyExited bool
+	trafficStop context.CancelFunc
+	trafficDone chan struct{}
+	trafficWG   sync.WaitGroup
 }
 
 func main() {
@@ -97,13 +103,15 @@ func run(ctx context.Context, traffic trafficMode) (result error) {
 	env.printInstructions()
 	env.startTraffic(ctx, traffic)
 
-	done := make(chan error, 1)
-	go func() { done <- env.proxy.Wait() }()
 	select {
 	case <-ctx.Done():
 		fmt.Fprintln(os.Stderr, "Shutting down ctf-proxy and all disposable lab services…")
 		return nil
-	case err := <-done:
+	case err := <-env.proxyDone:
+		env.proxyExited = true
+		if ctx.Err() != nil {
+			return nil
+		}
 		if err != nil {
 			return fmt.Errorf("ctf-proxy stopped unexpectedly: %w", err)
 		}
@@ -171,12 +179,27 @@ func (e *environment) start() error {
 	if err := e.proxy.Start(); err != nil {
 		return err
 	}
+	e.proxyDone = make(chan error, 1)
+	go func() { e.proxyDone <- e.proxy.Wait() }()
 	return e.waitHealth()
 }
 
 func (e *environment) cleanup() {
-	if e.proxy != nil && e.proxy.Process != nil {
+	if e.trafficStop != nil {
+		e.trafficStop()
+		<-e.trafficDone
+		e.trafficWG.Wait()
+	}
+	if e.proxy != nil && e.proxy.Process != nil && !e.proxyExited {
 		_ = e.proxy.Process.Signal(os.Interrupt)
+		select {
+		case <-e.proxyDone:
+			e.proxyExited = true
+		case <-time.After(5 * time.Second):
+			_ = e.proxy.Process.Kill()
+			<-e.proxyDone
+			e.proxyExited = true
+		}
 	}
 	for service := range e.projects {
 		compose := filepath.Join(e.stage, service, "compose.yaml")
@@ -224,15 +247,34 @@ func (e *environment) startTraffic(ctx context.Context, mode trafficMode) {
 	}
 	const interval = 2 * time.Second
 	fmt.Println("\nBackground mixed traffic started (one request every 2s; 80% benign, 20% exploit).")
+	trafficContext, stop := context.WithCancel(ctx)
+	e.trafficStop = stop
+	e.trafficDone = make(chan struct{})
+	slots := make(chan struct{}, 2)
 	go func() {
-		for {
-			e.runTrafficCycle(ctx, mode)
-			timer := time.NewTimer(interval)
+		defer close(e.trafficDone)
+		launch := func() {
 			select {
-			case <-ctx.Done():
-				timer.Stop()
+			case slots <- struct{}{}:
+				e.trafficWG.Add(1)
+				go func() {
+					defer e.trafficWG.Done()
+					defer func() { <-slots }()
+					e.runTrafficCycle(trafficContext, mode)
+				}()
+			default:
+				// Keep the requested cadence without allowing delayed clients to pile up.
+			}
+		}
+		launch()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-trafficContext.Done():
 				return
-			case <-timer.C:
+			case <-ticker.C:
+				launch()
 			}
 		}
 	}()
