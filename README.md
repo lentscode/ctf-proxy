@@ -91,3 +91,14 @@ filter form to exercise that workflow. Press
 `Ctrl-C` to stop the proxy and tear down only the disposable lab containers.
 Use `pnpm lab:up:keep` to retain the generated configuration, staged Compose
 files, and logs after shutdown.
+
+Start benign background traffic with:
+
+```sh
+pnpm lab:up:traffic
+```
+
+It sends one request every two seconds: an 80% chance of a benign echo,
+archive, login, or template request, and a 20% chance of one lab exploit. The
+exploit requests intentionally retrieve fake flags before filters are attached
+and produce rejection events afterwards.

@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
+	mathrand "math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +23,13 @@ import (
 
 var services = []string{"tcp-echo", "tcp-archive", "http-login", "http-template"}
 
+type trafficMode string
+
+const (
+	trafficNone  trafficMode = "none"
+	trafficMixed trafficMode = "mixed"
+)
+
 type environment struct {
 	repo     string
 	root     string
@@ -34,15 +43,22 @@ type environment struct {
 }
 
 func main() {
+	traffic := flag.String("traffic", string(trafficNone), "background traffic mode: none or mixed")
+	flag.Parse()
+	mode := trafficMode(*traffic)
+	if mode != trafficNone && mode != trafficMixed {
+		fmt.Fprintln(os.Stderr, "ctf-proxy lab: --traffic must be none or mixed")
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx); err != nil {
+	if err := run(ctx, mode); err != nil {
 		fmt.Fprintln(os.Stderr, "ctf-proxy lab:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context) (result error) {
+func run(ctx context.Context, traffic trafficMode) (result error) {
 	if err := preflight(); err != nil {
 		return err
 	}
@@ -79,6 +95,7 @@ func run(ctx context.Context) (result error) {
 		return err
 	}
 	env.printInstructions()
+	env.startTraffic(ctx, traffic)
 
 	done := make(chan error, 1)
 	go func() { done <- env.proxy.Wait() }()
@@ -196,6 +213,66 @@ func (e *environment) printInstructions() {
 	fmt.Printf("  HTTP login:    127.0.0.1:%d  python3 test/lab/services/http-login/client.py --host 127.0.0.1 --port %d --admin-exploit\n", e.ports["http-login"], e.ports["http-login"])
 	fmt.Printf("  HTTP template: 127.0.0.1:%d  python3 test/lab/services/http-template/client.py --host 127.0.0.1 --port %d --exploit\n", e.ports["http-template"], e.ports["http-template"])
 	fmt.Println("\nPress Ctrl-C to stop the proxy and remove the disposable Docker projects.")
+}
+
+// startTraffic repeatedly runs the existing Python client CLIs. Errors are
+// intentionally ignored because listener recreation during takeover and
+// restoration briefly interrupts individual exchanges.
+func (e *environment) startTraffic(ctx context.Context, mode trafficMode) {
+	if mode == trafficNone {
+		return
+	}
+	const interval = 2 * time.Second
+	fmt.Println("\nBackground mixed traffic started (one request every 2s; 80% benign, 20% exploit).")
+	go func() {
+		for {
+			e.runTrafficCycle(ctx, mode)
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+}
+
+func (e *environment) runTrafficCycle(ctx context.Context, mode trafficMode) {
+	if mode != trafficMixed {
+		return
+	}
+	if mathrand.IntN(5) != 0 {
+		benign := []trafficRequest{
+			{service: "tcp-echo", args: []string{"--message", "lab-heartbeat"}},
+			{service: "tcp-archive"},
+			{service: "http-login", args: []string{"--username", "alice", "--password", "wonderland"}},
+			{service: "http-template"},
+		}
+		request := benign[mathrand.IntN(len(benign))]
+		e.runClient(ctx, request.service, request.args...)
+		return
+	}
+	malicious := []trafficRequest{
+		{service: "tcp-echo", args: []string{"--admin"}},
+		{service: "tcp-archive", args: []string{"--exploit"}},
+		{service: "http-login", args: []string{"--admin-exploit"}},
+		{service: "http-template", args: []string{"--exploit"}},
+	}
+	request := malicious[mathrand.IntN(len(malicious))]
+	e.runClient(ctx, request.service, request.args...)
+}
+
+type trafficRequest struct {
+	service string
+	args    []string
+}
+
+func (e *environment) runClient(ctx context.Context, service string, args ...string) {
+	commandArgs := append([]string{filepath.Join(e.repo, "test", "lab", "services", service, "client.py"), "--host", "127.0.0.1", "--port", fmt.Sprint(e.ports[service])}, args...)
+	command := exec.CommandContext(ctx, "python3", commandArgs...)
+	command.Dir = e.repo
+	_ = command.Run()
 }
 
 func command(dir string, env []string, name string, args ...string) error {
