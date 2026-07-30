@@ -20,16 +20,6 @@ filters:
         - field: http.body
           operator: contains
           value: "username=admin"
-  - name: lab-block-template-flag-response
-    active: true
-    protocol: http
-    direction: response
-    action: reject
-    match:
-      all:
-        - field: http.body
-          operator: contains
-          value: "HTTP2TEMPLATE0000000000000000000000="
   - name: lab-block-template-probe-header
     active: true
     protocol: http
