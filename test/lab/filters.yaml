@@ -1,0 +1,43 @@
+version: 1
+filters:
+  - name: lab-block-archive-traversal
+    active: true
+    protocol: tcp
+    direction: request
+    action: reject
+    match:
+      all:
+        - field: tcp.body
+          operator: contains
+          value: "../"
+  - name: lab-block-login-admin
+    active: true
+    protocol: http
+    direction: request
+    action: reject
+    match:
+      all:
+        - field: http.body
+          operator: contains
+          value: "username=admin"
+  - name: lab-block-template-flag-response
+    active: true
+    protocol: http
+    direction: response
+    action: reject
+    match:
+      all:
+        - field: http.body
+          operator: contains
+          value: "HTTP2TEMPLATE0000000000000000000000="
+  - name: lab-block-template-probe-header
+    active: true
+    protocol: http
+    direction: request
+    action: reject
+    match:
+      all:
+        - field: http.header
+          header: X-Lab-Probe
+          operator: exact
+          value: blocked
