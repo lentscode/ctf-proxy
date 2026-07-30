@@ -138,7 +138,8 @@ func (e *environment) start() error {
 		return err
 	}
 	config, tokens := filepath.Join(e.root, "ctf-proxy.yaml"), filepath.Join(e.root, ".tokens")
-	if err := os.WriteFile(config, []byte("version: 1\nproxies: []\n"), 0o600); err != nil {
+	configuration := fmt.Sprintf("version: 1\nfilter_files:\n  - %q\nproxies: []\n", filepath.Join(e.repo, "test", "lab", "filters.yaml"))
+	if err := os.WriteFile(config, []byte(configuration), 0o600); err != nil {
 		return err
 	}
 	if err := os.WriteFile(tokens, []byte(e.token+"\n"), 0o600); err != nil {

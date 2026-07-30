@@ -82,7 +82,9 @@ pnpm lab:up
 The command prints a dashboard URL, control token, fixture ports, and Python
 client commands. The services begin directly exposed so the intended
 vulnerabilities can be observed. Use **Proxies → Scan and configure** to move
-them behind ctf-proxy, then add filters and watch the Events panel. Press
+them behind ctf-proxy. The predefined `lab-*` YAML filters are available in
+each proxy editor's **Available filters** list; attach the relevant rules and
+watch the Events panel. Press
 `Ctrl-C` to stop the proxy and tear down only the disposable lab containers.
 Use `pnpm lab:up:keep` to retain the generated configuration, staged Compose
 files, and logs after shutdown.
