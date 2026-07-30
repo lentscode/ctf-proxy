@@ -73,6 +73,7 @@ func run(ctx context.Context) (result error) {
 		} else {
 			fmt.Fprintf(os.Stderr, "Lab artifacts preserved at %s\n", root)
 		}
+		fmt.Fprintln(os.Stderr, "Interactive lab shutdown complete.")
 	}()
 	if err := env.start(); err != nil {
 		return err
@@ -83,6 +84,7 @@ func run(ctx context.Context) (result error) {
 	go func() { done <- env.proxy.Wait() }()
 	select {
 	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr, "Shutting down ctf-proxy and all disposable lab services…")
 		return nil
 	case err := <-done:
 		if err != nil {
