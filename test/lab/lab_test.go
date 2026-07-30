@@ -48,7 +48,9 @@ func TestRealWorldLab(t *testing.T) {
 	})
 
 	t.Run("dashboard_takeover", func(t *testing.T) {
-		lab.runPlaywright("takeover.spec.ts")
+		if err := lab.runPlaywright("takeover.spec.ts"); err != nil {
+			t.Fatal(err)
+		}
 		lab.proxiesFromAPI()
 		if result := lab.client("tcp-echo", "--admin"); !result.FlagFormatValid {
 			t.Fatalf("TCP echo did not work after takeover: %s", stableMapJSON(result))
@@ -65,7 +67,9 @@ func TestRealWorldLab(t *testing.T) {
 	})
 
 	t.Run("dashboard_filters_and_real_traffic", func(t *testing.T) {
-		lab.runPlaywright("filters.spec.ts")
+		if err := lab.runPlaywright("filters.spec.ts"); err != nil {
+			t.Fatal(err)
+		}
 		if result := lab.client("tcp-echo", "--admin"); !result.FlagFormatValid {
 			t.Fatalf("unfiltered TCP echo unexpectedly failed: %s", stableMapJSON(result))
 		}
@@ -105,9 +109,15 @@ func TestRealWorldLab(t *testing.T) {
 		}
 	})
 
-	t.Run("dashboard_events", func(t *testing.T) { lab.runPlaywright("events.spec.ts") })
+	t.Run("dashboard_events", func(t *testing.T) {
+		if err := lab.runPlaywright("events.spec.ts"); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("dashboard_restore", func(t *testing.T) {
-		lab.runPlaywright("takeover.spec.ts")
+		if err := lab.runPlaywright("takeover.spec.ts"); err != nil {
+			t.Fatal(err)
+		}
 		var result struct {
 			Proxies []any `json:"proxies"`
 		}

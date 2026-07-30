@@ -194,13 +194,20 @@ func (l *lab) waitPort(port int) {
 
 func (l *lab) baseURL() string { return fmt.Sprintf("http://127.0.0.1:%d", l.control) }
 
-func (l *lab) runPlaywright(spec string) {
-	l.t.Helper()
+func (l *lab) runPlaywright(spec string) error {
 	env := []string{"LAB_BASE_URL=" + l.baseURL(), "LAB_CONTROL_TOKEN=" + labToken, "LAB_TCP_ECHO_PORT=" + fmt.Sprint(l.ports["tcp-echo"]), "LAB_TCP_ARCHIVE_PORT=" + fmt.Sprint(l.ports["tcp-archive"]), "LAB_HTTP_LOGIN_PORT=" + fmt.Sprint(l.ports["http-login"]), "LAB_HTTP_TEMPLATE_PORT=" + fmt.Sprint(l.ports["http-template"])}
 	for name, proxy := range l.proxies {
 		env = append(env, "LAB_"+strings.ToUpper(strings.ReplaceAll(name, "-", "_"))+"_PROXY="+proxy)
 	}
-	l.run(l.repo, env, pnpm(), "exec", "playwright", "test", "--config", "test/lab/playwright/playwright.config.ts", "test/lab/playwright/"+spec)
+	command := exec.Command(pnpm(), "exec", "playwright", "test", "--config", "test/lab/playwright/playwright.config.ts", "test/lab/playwright/"+spec)
+	command.Dir = l.repo
+	command.Env = append(os.Environ(), env...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		l.failed = true
+		return fmt.Errorf("playwright %s: %w\n%s", spec, err, output)
+	}
+	return nil
 }
 
 func (l *lab) proxiesFromAPI() {
