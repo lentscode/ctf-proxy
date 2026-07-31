@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -51,8 +52,30 @@ func TestRegistryAggregatesByProxyAndComputesRatios(t *testing.T) {
 func TestRegistryDropsTrafficBeforeCompetitionStart(t *testing.T) {
 	registry := New(Schedule{CompetitionStart: time.Now().UTC().Add(time.Hour), RoundDuration: time.Minute, RetentionRounds: 1})
 	registry.Register("web", "http").Request()
-	_, _, current := registry.Current()
+	_, proxies, current := registry.Current()
 	require.False(t, current)
+	require.NotNil(t, proxies)
+	require.Empty(t, proxies)
+}
+
+func TestValuesJSONFieldNamesAreDistinct(t *testing.T) {
+	values := Values{Requests: 1, Responses: 2, ConnectionsAccepted: 3, ConnectionsActive: 4, ClientChunks: 5, ServerChunks: 6, ClientToUpstreamBytes: 7, UpstreamToClientBytes: 8, RejectionsTotal: 9, FilterRejections: 10, CapacityRejections: 11}
+	data, err := json.Marshal(values)
+	require.NoError(t, err)
+	var decoded map[string]uint64
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Equal(t, map[string]uint64{"requests": 1, "responses": 2, "connections_accepted": 3, "connections_active": 4, "client_chunks": 5, "server_chunks": 6, "client_to_upstream_bytes": 7, "upstream_to_client_bytes": 8, "rejections_total": 9, "filter_rejections": 10, "capacity_rejections": 11, "upstream_failures": 0, "rejection_denominator": 0, "rejection_ratio": 0}, decoded)
+}
+
+func TestRegistryRegisterRefreshesProtocol(t *testing.T) {
+	registry := New(Schedule{CompetitionStart: time.Now().UTC().Add(-time.Minute), RoundDuration: time.Minute, RetentionRounds: 1})
+	registry.Register("service", "http").Request()
+	registry.Register("service", "tcp")
+	_, summaries, current := registry.Current()
+	require.True(t, current)
+	require.Len(t, summaries, 1)
+	require.Equal(t, "tcp", summaries[0].Protocol)
+	require.Equal(t, uint64(0), summaries[0].Metrics.RejectionDenominator)
 }
 
 func TestFinalizeUsesProtocolSpecificRejectionDenominators(t *testing.T) {

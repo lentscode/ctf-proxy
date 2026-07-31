@@ -54,7 +54,8 @@ Rounds are anchored to `competition_start`; the example retains 24 hours of
 two-minute rounds. History resets when ctf-proxy restarts. The authenticated
 dashboard shows the current round and retained per-service history. The same
 data is available from `GET /api/v1/metrics` and
-`GET /api/v1/metrics/rounds?proxy=NAME`.
+`GET /api/v1/metrics/rounds?proxy=NAME`. The latter accepts an optional
+`limit` query parameter, bounded by `retention_rounds`.
 
 ## Development
 

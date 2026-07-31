@@ -73,6 +73,8 @@ func (r *Registry) Register(name, protocol string) Recorder {
 	r.mu.Lock()
 	if r.identities[name] == nil {
 		r.identities[name] = &identity{name: name, protocol: protocol}
+	} else {
+		r.identities[name].protocol = protocol
 	}
 	r.mu.Unlock()
 	return Recorder{r: r, name: name, protocol: protocol}
@@ -103,7 +105,7 @@ func (r *Registry) update(name string, fn func(*Values)) {
 func (r *Registry) Current() (Round, []ProxySummary, bool) {
 	n, ok := r.current(time.Now().UTC())
 	if !ok {
-		return Round{}, nil, false
+		return Round{}, []ProxySummary{}, false
 	}
 	return r.round(n), r.summaries(n), true
 }
