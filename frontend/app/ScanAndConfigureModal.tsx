@@ -239,19 +239,8 @@ export function ScanAndConfigureModal({
                       return (
                         <div
                           key={candidate.id}
-                          className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-b-0 max-md:grid-cols-1"
+                          className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-b-0 max-md:grid-cols-1"
                         >
-                          <input
-                            aria-label={`Select ${candidate.service} ${candidate.listen}`}
-                            type="checkbox"
-                            checked={choice.selected}
-                            disabled={!candidate.eligible}
-                            onChange={(event) =>
-                              update(candidate, {
-                                selected: event.target.checked,
-                              })
-                            }
-                          />
                           <div>
                             <p className="m-0 text-sm text-zinc-100">
                               {candidate.service} ·{" "}
@@ -300,6 +289,28 @@ export function ScanAndConfigureModal({
                               <option value="https">HTTPS</option>
                             </select>
                           )}
+                          <button
+                            type="button"
+                            aria-pressed={choice.selected}
+                            aria-label={`${choice.selected ? "Deselect" : "Select"} ${candidate.service} ${candidate.listen}`}
+                            disabled={!candidate.eligible}
+                            onClick={() =>
+                              update(candidate, {
+                                selected: !choice.selected,
+                              })
+                            }
+                            className={`min-h-9 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold transition focus:outline-none focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-500 disabled:opacity-100 ${
+                              choice.selected
+                                ? "border-emerald-700 bg-emerald-950 text-emerald-100 hover:border-emerald-400 hover:bg-emerald-900"
+                                : "border-zinc-600 bg-transparent text-zinc-100 hover:border-zinc-100 hover:bg-zinc-900"
+                            }`}
+                          >
+                            {!candidate.eligible
+                              ? "Unavailable"
+                              : choice.selected
+                                ? "Selected"
+                                : "Select service"}
+                          </button>
                         </div>
                       );
                     })}
