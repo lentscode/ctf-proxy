@@ -59,9 +59,12 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   const showEditor =
     selected !== undefined || isCreating || proxies.data?.length === 0;
 
-  // refresh invalidates the shared list so all proxy views converge after a mutation.
+  // refresh invalidates shared proxy and metric views after a mutation.
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["proxies"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["proxies"] }),
+      queryClient.invalidateQueries({ queryKey: ["metrics"] }),
+    ]);
   };
   const create = useMutation({
     mutationFn: createProxy,
@@ -86,9 +89,9 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
       name: string;
       definition: ProxyDefinition;
     }) => replaceProxy(name, definition),
-    onSuccess: async (_, { name }) => {
+    onSuccess: async (proxy) => {
       await refresh();
-      toast.success("Proxy saved", { description: `${name} was updated.` });
+      toast.success("Proxy saved", { description: `${proxy.name} was updated.` });
     },
     onError: (error) => {
       if (!isUnauthorized(error))
@@ -158,8 +161,12 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
   // save chooses create or replacement based on the current selection.
   async function save(definition: ProxyDefinition) {
     if (selected) {
-      await replace.mutateAsync({ name: selected.name, definition });
-      setSelectedName(selected.name);
+      const replaced = await replace.mutateAsync({
+        name: selected.name,
+        definition,
+      });
+      setSelectedName(replaced.name);
+      setSearchParams({ proxy: replaced.name });
     } else {
       const created = await create.mutateAsync(definition);
       setSelectedName(created.name);
@@ -246,7 +253,6 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
             <ProxyEditor
               key={selected?.name ?? "new"}
               initial={selected ? toDefinition(selected) : emptyProxy}
-              isExisting={Boolean(selected)}
               isSaving={create.isPending || replace.isPending}
               onSave={save}
               onDelete={selected ? confirmDelete : undefined}
@@ -305,7 +311,6 @@ function ProxyDirectoryItem({
 // ProxyEditorProps defines the controlled proxy form and its mutation states.
 interface ProxyEditorProps {
   initial: ProxyDefinition;
-  isExisting: boolean;
   isSaving: boolean;
   isDeleting: boolean;
   onSave: (definition: ProxyDefinition) => Promise<void>;
@@ -318,7 +323,6 @@ interface ProxyEditorProps {
 // ProxyEditor validates and submits a proxy definition together with filter choices.
 function ProxyEditor({
   initial,
-  isExisting,
   isSaving,
   isDeleting,
   onSave,
@@ -377,7 +381,6 @@ function ProxyEditor({
     <form className="grid gap-6" onSubmit={(event) => void submit(event)}>
       <ProxyDetailsFields
         draft={draft}
-        isExisting={isExisting}
         onUpdate={update}
       />
       <FilterAssignments
@@ -406,11 +409,9 @@ function ProxyEditor({
 
 function ProxyDetailsFields({
   draft,
-  isExisting,
   onUpdate,
 }: {
   draft: ProxyDefinition;
-  isExisting: boolean;
   onUpdate: <K extends keyof ProxyDefinition>(
     key: K,
     value: ProxyDefinition[K],
@@ -425,7 +426,6 @@ function ProxyDetailsFields({
             className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-950 px-2.5 text-sm text-zinc-100 outline-none transition focus:border-zinc-100 focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:opacity-60"
             value={draft.name}
             onChange={(event) => onUpdate("name", event.target.value)}
-            disabled={isExisting}
             required
           />
         </label>

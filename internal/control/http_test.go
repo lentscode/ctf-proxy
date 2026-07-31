@@ -402,26 +402,39 @@ func TestAPIProxyRoutesSupportRetrievalReplacementAndActivation(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code)
 	require.Contains(t, response.Body.String(), "active is required")
 
-	// The URL name is authoritative: a replacement must not be able to rename
-	// a configured proxy through its request body.
+	// The URL identifies the existing proxy and the body supplies its new name.
 	response = serveAPI(handler, http.MethodPut, "/api/v1/proxies/web", `{"name":"attempted-rename","active":false,"protocol":"tcp","listen":"`+listen+`","upstream":"127.0.0.1:31339","filters":[]}`)
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
-	require.Equal(t, "web", view.Name)
+	require.Equal(t, "attempted-rename", view.Name)
 	require.Equal(t, "127.0.0.1:31339", view.Upstream)
+	response = serveAPI(handler, http.MethodGet, "/api/v1/proxies/web", "")
+	require.Equal(t, http.StatusNotFound, response.Code)
 
-	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/activate", "")
+	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/attempted-rename/activate", "")
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
 	require.True(t, view.Active)
 	require.Equal(t, StateRunning, view.State)
 
-	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/deactivate", "")
+	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/attempted-rename/deactivate", "")
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &view))
 	require.False(t, view.Active)
 	require.Equal(t, StateInactive, view.State)
 	require.False(t, store.Snapshot().Proxies[0].Active)
+}
+
+func TestAPIProxyRenameRejectsDuplicateDestination(t *testing.T) {
+	_, handler := newControlAPITestServer(t)
+	firstListen := unusedTCPAddress(t)
+	secondListen := unusedTCPAddress(t)
+	require.Equal(t, http.StatusCreated, serveAPI(handler, http.MethodPost, "/api/v1/proxies", `{"name":"first","active":false,"protocol":"tcp","listen":"`+firstListen+`","upstream":"127.0.0.1:31338"}`).Code)
+	require.Equal(t, http.StatusCreated, serveAPI(handler, http.MethodPost, "/api/v1/proxies", `{"name":"second","active":false,"protocol":"tcp","listen":"`+secondListen+`","upstream":"127.0.0.1:31339"}`).Code)
+
+	response := serveAPI(handler, http.MethodPut, "/api/v1/proxies/first", `{"name":"second","active":false,"protocol":"tcp","listen":"`+firstListen+`","upstream":"127.0.0.1:31338","filters":[]}`)
+	require.Equal(t, http.StatusConflict, response.Code)
+	require.Contains(t, response.Body.String(), `"conflict"`)
 }
 
 // TestAPIRouteAndMethodValidation covers unknown routes and unsupported methods.
