@@ -67,7 +67,7 @@ async function cleanup() {
 }
 
 try {
-  await writeFile(configPath, 'version: 1\nproxies: []\n', { mode: 0o600 })
+  await writeFile(configPath, 'version: 1\nmetrics:\n  competition_start: "2026-01-01T00:00:00Z"\n  round_duration: 2m\n  retention_rounds: 720\nproxies: []\n', { mode: 0o600 })
   await writeFile(tokensPath, `${token}\n`, { mode: 0o600 })
   await mkdir(join(composeRoot, 'demo'), { recursive: true })
   await mkdir(fakeBinDirectory, { recursive: true })

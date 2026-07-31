@@ -16,14 +16,20 @@ type Schedule struct {
 
 // Values are safe aggregate payload counters. No traffic metadata is retained.
 type Values struct {
-	Requests, Responses                                   uint64  `json:"requests,omitempty"`
-	ConnectionsAccepted, ConnectionsActive                uint64  `json:"connections_accepted,omitempty"`
-	ClientChunks, ServerChunks                            uint64  `json:"client_chunks,omitempty"`
-	ClientToUpstreamBytes, UpstreamToClientBytes          uint64  `json:"client_to_upstream_bytes"`
-	RejectionsTotal, FilterRejections, CapacityRejections uint64  `json:"rejections_total"`
-	UpstreamFailures                                      uint64  `json:"upstream_failures"`
-	RejectionDenominator                                  uint64  `json:"rejection_denominator"`
-	RejectionRatio                                        float64 `json:"rejection_ratio"`
+	Requests              uint64  `json:"requests,omitempty"`
+	Responses             uint64  `json:"responses,omitempty"`
+	ConnectionsAccepted   uint64  `json:"connections_accepted,omitempty"`
+	ConnectionsActive     uint64  `json:"connections_active,omitempty"`
+	ClientChunks          uint64  `json:"client_chunks,omitempty"`
+	ServerChunks          uint64  `json:"server_chunks,omitempty"`
+	ClientToUpstreamBytes uint64  `json:"client_to_upstream_bytes"`
+	UpstreamToClientBytes uint64  `json:"upstream_to_client_bytes"`
+	RejectionsTotal       uint64  `json:"rejections_total"`
+	FilterRejections      uint64  `json:"filter_rejections"`
+	CapacityRejections    uint64  `json:"capacity_rejections"`
+	UpstreamFailures      uint64  `json:"upstream_failures"`
+	RejectionDenominator  uint64  `json:"rejection_denominator"`
+	RejectionRatio        float64 `json:"rejection_ratio"`
 }
 
 // Round is one chronological aggregate.
