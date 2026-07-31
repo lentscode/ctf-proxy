@@ -23,8 +23,8 @@ test('operator applies or restores the four-service real-world lab takeover', as
   for (const service of ['tcp-echo', 'tcp-archive', 'http-login', 'http-template']) {
     await page.getByLabel(new RegExp(`Select ${service}`)).check()
   }
-  await page.getByLabel(/Protocol for http-login/).selectOption('http')
-  await page.getByLabel(/Protocol for http-template/).selectOption('http')
+  await expect(page.getByLabel(/Protocol for http-login/)).toHaveValue('http')
+  await expect(page.getByLabel(/Protocol for http-template/)).toHaveValue('http')
   await page.getByRole('button', { name: 'Apply 4 selected' }).click()
   await page.getByRole('button', { name: 'Confirm' }).click()
   await expect(page.getByRole('button', { name: 'Restore', exact: true })).toHaveCount(4, { timeout: 60_000 })

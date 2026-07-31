@@ -12,11 +12,10 @@ import {
 } from '../lib/api'
 import { queryClient } from '../lib/query-client'
 import { toast } from 'sonner'
+import { defaultProtocolChoice, type ProtocolChoice } from './protocol-choice'
 
 interface Props { onUnauthorized: () => void }
-type Choice = { selected: boolean, protocol: 'tcp' | 'http', scheme: 'http' | 'https' }
-
-const defaultChoice: Choice = { selected: false, protocol: 'tcp', scheme: 'http' }
+type Choice = ProtocolChoice
 const reportedQueryErrors = new WeakSet<object>()
 
 export function ComposeTakeoverPage({ onUnauthorized }: Props) {
@@ -59,7 +58,7 @@ export function ComposeTakeoverPage({ onUnauthorized }: Props) {
   const updateChoice = (candidate: ComposeCandidate, value: Partial<Choice>) => {
     setChoices((current) => ({
       ...current,
-      [candidate.id]: { ...defaultChoice, ...current[candidate.id], ...value },
+      [candidate.id]: { ...defaultProtocolChoice(candidate), ...current[candidate.id], ...value },
     }))
   }
 
@@ -101,7 +100,7 @@ function ReviewSection({ projects, choices, selectedCount, isApplying, confirmat
 }
 
 function ProjectCandidates({ project, choices, onChoiceChange }: { project: ComposeProject, choices: Record<string, Choice>, onChoiceChange: (candidate: ComposeCandidate, value: Partial<Choice>) => void }) {
-  return <article className="rounded-md border border-zinc-700"><header className="border-b border-zinc-700 px-4 py-3"><h3 className="m-0 text-sm font-semibold">{project.name}</h3><p className="m-0 font-mono text-[11px] text-zinc-400">{project.compose_file}</p></header>{project.candidates.map((candidate) => <CandidateRow key={candidate.id} candidate={candidate} choice={choices[candidate.id] ?? defaultChoice} onChange={onChoiceChange} />)}</article>
+  return <article className="rounded-md border border-zinc-700"><header className="border-b border-zinc-700 px-4 py-3"><h3 className="m-0 text-sm font-semibold">{project.name}</h3><p className="m-0 font-mono text-[11px] text-zinc-400">{project.compose_file}</p></header>{project.candidates.map((candidate) => <CandidateRow key={candidate.id} candidate={candidate} choice={choices[candidate.id] ?? defaultProtocolChoice(candidate)} onChange={onChoiceChange} />)}</article>
 }
 
 function CandidateRow({ candidate, choice, onChange }: { candidate: ComposeCandidate, choice: Choice, onChange: (candidate: ComposeCandidate, value: Partial<Choice>) => void }) {
