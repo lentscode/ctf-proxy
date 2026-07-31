@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Keep the chosen dashboard surface visible beyond short page content. */
+html,
+body,
+#root {
+  min-height: 100%;
+  background-color: var(--color-zinc-950);
+}
+
 /*
  * Disabled controls need a distinct surface as well as a muted label. Opacity
  * alone leaves dark form controls looking active, particularly native selects.
