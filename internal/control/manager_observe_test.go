@@ -61,6 +61,57 @@ func TestManagerReplacePreservesYAMLOnlyProtocolSettings(t *testing.T) {
 	require.Equal(t, original.TCP, store.Snapshot().Proxies[0].TCP)
 }
 
+func TestManagerRenameActiveProxyReplacesRunner(t *testing.T) {
+	manager, store, original, upstream := startActiveTCPManager(t)
+
+	view, err := manager.Replace(original.Name, config.Proxy{
+		Name: "renamed", Active: true, Protocol: "tcp", Listen: original.Listen, Upstream: upstream,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "renamed", view.Name)
+	require.Equal(t, StateRunning, view.State)
+	_, err = manager.Get(original.Name)
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Equal(t, "renamed", store.Snapshot().Proxies[0].Name)
+	manager.mu.Lock()
+	_, oldStateExists := manager.states[original.Name]
+	_, newRunnerExists := manager.running["renamed"]
+	manager.mu.Unlock()
+	require.False(t, oldStateExists)
+	require.True(t, newRunnerExists)
+	assertTCPProxyRoundTrip(t, original.Listen)
+}
+
+func TestManagerRenameMovesMetricsAndDeleteRemovesThem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	start := time.Now().UTC().Add(-time.Minute)
+	original := config.Proxy{Name: "web", Active: false, Protocol: "http", Listen: "127.0.0.1:31337", Upstream: "http://127.0.0.1:31338"}
+	require.NoError(t, config.Save(path, config.Config{
+		Version: config.Version,
+		Metrics: &config.Metrics{CompetitionStart: start, RoundDuration: config.Duration(time.Minute), RetentionRounds: 1},
+		Proxies: []config.Proxy{original},
+	}))
+	store, err := config.OpenStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+
+	manager.Metrics().Register("web", "http").Request()
+	_, err = manager.Replace("web", config.Proxy{Name: "renamed", Active: false, Protocol: "http", Listen: original.Listen, Upstream: original.Upstream})
+	require.NoError(t, err)
+	_, found := manager.Metrics().Rounds("web", 1)
+	require.False(t, found)
+	rounds, found := manager.Metrics().Rounds("renamed", 1)
+	require.True(t, found)
+	require.Equal(t, uint64(1), rounds[0].Metrics.Requests)
+
+	require.NoError(t, manager.Delete("renamed"))
+	_, found = manager.Metrics().Rounds("renamed", 1)
+	require.False(t, found)
+}
+
 // TestManagerReportsRejectedConfiguration verifies sanitized control failure events.
 func TestManagerReportsRejectedConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")

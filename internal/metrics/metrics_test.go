@@ -87,6 +87,56 @@ func TestRegistryRegisterRefreshesProtocol(t *testing.T) {
 	require.Equal(t, uint64(0), summaries[0].Metrics.RejectionDenominator)
 }
 
+func TestRegistryRenameMovesHistoryAndExistingRecorders(t *testing.T) {
+	registry := New(Schedule{CompetitionStart: time.Now().UTC().Add(-time.Minute), RoundDuration: time.Minute, RetentionRounds: 2})
+	recorder := registry.Register("old", "tcp")
+	recorder.AcceptedConnection()
+	recorder.Bytes(false, 12)
+
+	registry.Rename("old", "new", "http")
+	recorder.Request()
+	recorder.ClosedConnection()
+
+	_, summaries, current := registry.Current()
+	require.True(t, current)
+	require.Len(t, summaries, 1)
+	require.Equal(t, "new", summaries[0].Name)
+	require.Equal(t, "http", summaries[0].Protocol)
+	require.Equal(t, uint64(1), summaries[0].Metrics.ConnectionsAccepted)
+	require.Equal(t, uint64(12), summaries[0].Metrics.ClientToUpstreamBytes)
+	require.Equal(t, uint64(1), summaries[0].Metrics.Requests)
+	require.Equal(t, uint64(0), summaries[0].Metrics.ConnectionsActive)
+
+	_, ok := registry.Rounds("old", 1)
+	require.False(t, ok)
+	rounds, ok := registry.Rounds("new", 1)
+	require.True(t, ok)
+	require.Len(t, rounds, 1)
+	require.Equal(t, uint64(1), rounds[0].Metrics.Requests)
+}
+
+func TestRegistryRemoveDropsHistoryAndStaleRecorders(t *testing.T) {
+	registry := New(Schedule{CompetitionStart: time.Now().UTC().Add(-time.Minute), RoundDuration: time.Minute, RetentionRounds: 1})
+	stale := registry.Register("service", "http")
+	stale.Request()
+	registry.Remove("service")
+
+	stale.Request()
+	_, summaries, current := registry.Current()
+	require.True(t, current)
+	require.Empty(t, summaries)
+	_, ok := registry.Rounds("service", 1)
+	require.False(t, ok)
+
+	fresh := registry.Register("service", "http")
+	fresh.Response()
+	_, summaries, current = registry.Current()
+	require.True(t, current)
+	require.Len(t, summaries, 1)
+	require.Equal(t, uint64(0), summaries[0].Metrics.Requests)
+	require.Equal(t, uint64(1), summaries[0].Metrics.Responses)
+}
+
 func TestFinalizeUsesProtocolSpecificRejectionDenominators(t *testing.T) {
 	for _, testCase := range []struct {
 		name, protocol  string

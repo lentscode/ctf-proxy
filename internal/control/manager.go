@@ -83,6 +83,13 @@ type managedProxy struct {
 	done       chan error
 }
 
+// proxyRename records the metric identity move required by one replacement.
+type proxyRename struct {
+	oldName, newName string
+	oldProtocol      string
+	newProtocol      string
+}
+
 // Manager serializes configuration changes and reconciles affected listeners.
 type Manager struct {
 	mu         sync.Mutex
@@ -134,7 +141,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	cfg := m.store.Snapshot()
 	for _, definition := range cfg.Proxies {
-		if _, err := m.runnerFor(definition, m.catalog, cfg.MaxConnections); err != nil {
+		if _, err := m.runnerFor(definition, m.catalog, cfg.MaxConnections, metrics.Recorder{}); err != nil {
 			m.cancel()
 			return fmt.Errorf("build proxy %q: %w", definition.Name, err)
 		}
@@ -318,8 +325,18 @@ func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, erro
 	if index < 0 {
 		return ProxyView{}, ErrNotFound
 	}
-	definition.Name = name
+	// Direct manager callers predating rename support may omit Name. The HTTP
+	// API and dashboard always supply it, but retaining this behavior avoids
+	// treating an otherwise ordinary replacement as a rename to an empty name.
+	if definition.Name == "" {
+		definition.Name = name
+	}
 	previous := next.Proxies[index]
+	if definition.Name != name {
+		if _, exists := findProxy(next, definition.Name); exists {
+			return ProxyView{}, fmt.Errorf("%w: proxy %q already exists", ErrConflict, definition.Name)
+		}
+	}
 	// Timeout settings are YAML-only for now, so dashboard/API edits to the
 	// same protocol must not silently discard them. A protocol switch drops
 	// settings because retaining the old protocol's block would be invalid.
@@ -328,7 +345,11 @@ func (m *Manager) Replace(name string, definition config.Proxy) (ProxyView, erro
 		definition.HTTP = previous.HTTP
 	}
 	next.Proxies[index] = definition
-	if err := m.applyLocked(next); err != nil {
+	renames := []proxyRename(nil)
+	if definition.Name != name {
+		renames = append(renames, proxyRename{oldName: name, newName: definition.Name, oldProtocol: previous.Protocol, newProtocol: definition.Protocol})
+	}
+	if err := m.applyLockedWithRenames(next, renames); err != nil {
 		m.reportControlFailure(err)
 		return ProxyView{}, err
 	}
@@ -376,6 +397,12 @@ func (m *Manager) SetActive(name string, active bool) (ProxyView, error) {
 
 // applyLocked validates a complete next configuration before committing it.
 func (m *Manager) applyLocked(next config.Config) error {
+	return m.applyLockedWithRenames(next, nil)
+}
+
+// applyLockedWithRenames validates, reconciles, and persists a complete next
+// configuration while keeping requested metric identity moves rollback-safe.
+func (m *Manager) applyLockedWithRenames(next config.Config, renames []proxyRename) error {
 	if err := next.Validate(); err != nil {
 		return err
 	}
@@ -387,12 +414,20 @@ func (m *Manager) applyLocked(next config.Config) error {
 		return err
 	}
 	for _, definition := range next.Proxies {
-		if _, err := m.runnerFor(definition, nextCatalog, next.MaxConnections); err != nil {
+		if _, err := m.runnerFor(definition, nextCatalog, next.MaxConnections, metrics.Recorder{}); err != nil {
 			return fmt.Errorf("build proxy %q: %w", definition.Name, err)
 		}
 	}
 
 	previous := m.store.Snapshot()
+	metricsExisted := m.metricExistence(previous, next)
+	m.renameMetrics(renames, false)
+	metricsRenamed := len(renames) > 0 && m.metrics != nil
+	rollbackMetrics := func() {
+		if metricsRenamed {
+			m.renameMetrics(renames, true)
+		}
+	}
 	changedFilters := changedManagedFilters(previous, next)
 	stopped := make([]config.Proxy, 0)
 	for name, current := range m.running {
@@ -416,6 +451,8 @@ func (m *Manager) applyLocked(next config.Config) error {
 			for _, name := range started {
 				m.stopLocked(name)
 			}
+			rollbackMetrics()
+			m.removeNewMetricSeries(started, metricsExisted)
 			m.restoreLocked(stopped, m.catalog, previous.MaxConnections)
 			if errors.Is(err, ErrConflict) {
 				return err
@@ -428,11 +465,73 @@ func (m *Manager) applyLocked(next config.Config) error {
 		for _, name := range started {
 			m.stopLocked(name)
 		}
+		rollbackMetrics()
+		m.removeNewMetricSeries(started, metricsExisted)
 		m.restoreLocked(stopped, m.catalog, previous.MaxConnections)
 		return fmt.Errorf("%w: %v", ErrPersistence, err)
 	}
+	if m.metrics != nil {
+		renamed := make(map[string]struct{}, len(renames))
+		for _, rename := range renames {
+			delete(m.states, rename.oldName)
+			renamed[rename.oldName] = struct{}{}
+		}
+		for _, name := range deletedProxyNames(previous, next) {
+			if _, isRenamed := renamed[name]; !isRenamed {
+				m.metrics.Remove(name)
+			}
+		}
+	} else {
+		for _, rename := range renames {
+			delete(m.states, rename.oldName)
+		}
+	}
 	m.catalog = nextCatalog
 	return nil
+}
+
+func (m *Manager) metricExistence(previous, next config.Config) map[string]bool {
+	existed := make(map[string]bool)
+	if m.metrics == nil {
+		return existed
+	}
+	for _, cfg := range []config.Config{previous, next} {
+		for _, definition := range cfg.Proxies {
+			if _, seen := existed[definition.Name]; !seen {
+				existed[definition.Name] = m.metrics.Has(definition.Name)
+			}
+		}
+	}
+	return existed
+}
+
+func (m *Manager) removeNewMetricSeries(names []string, existed map[string]bool) {
+	if m.metrics == nil {
+		return
+	}
+	for _, name := range names {
+		if !existed[name] {
+			m.metrics.Remove(name)
+		}
+	}
+}
+
+// renameMetrics moves metric identities before listener handover and reverses
+// the moves if handover or persistence fails.
+func (m *Manager) renameMetrics(renames []proxyRename, reverse bool) {
+	if m.metrics == nil {
+		return
+	}
+	if reverse {
+		for index := len(renames) - 1; index >= 0; index-- {
+			rename := renames[index]
+			m.metrics.Rename(rename.newName, rename.oldName, rename.oldProtocol)
+		}
+		return
+	}
+	for _, rename := range renames {
+		m.metrics.Rename(rename.oldName, rename.newName, rename.newProtocol)
+	}
 }
 
 // restoreLocked attempts to restart runners stopped during a failed update.
@@ -447,14 +546,15 @@ func (m *Manager) restoreLocked(definitions []config.Proxy, catalog *filterCatal
 
 // startLocked binds and tracks one active proxy runner.
 func (m *Manager) startLocked(definition config.Proxy, catalog *filterCatalog, maxConnections int) error {
-	runner, err := m.runnerFor(definition, catalog, maxConnections)
-	if err != nil {
-		return err
-	}
 	listener, err := net.Listen("tcp", definition.Listen)
 	if err != nil {
 		m.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyListenerFailed, Proxy: definition.Name, Message: "proxy listener could not be started"})
 		return fmt.Errorf("%w: listen on %s: %v", ErrConflict, definition.Listen, err)
+	}
+	runner, err := m.runnerFor(definition, catalog, maxConnections, m.metricRecorder(definition))
+	if err != nil {
+		_ = listener.Close()
+		return err
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	current := &managedProxy{definition: definition, cancel: cancel, done: make(chan error, 1)}
@@ -495,7 +595,7 @@ func (m *Manager) stopAllLocked() {
 }
 
 // runnerFor builds a protocol-specific runner and immutable filter chain.
-func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, maxConnections int) (proxy.Runner, error) {
+func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, maxConnections int, recorder metrics.Recorder) (proxy.Runner, error) {
 	filters, err := catalog.registry.Build(definition.Filters)
 	if err != nil {
 		return nil, fmt.Errorf("resolve filters: %w", err)
@@ -508,10 +608,6 @@ func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, max
 		maxConnections = defaultMaxConnections
 	}
 	slots := make(chan struct{}, maxConnections)
-	recorder := metrics.Recorder{}
-	if m.metrics != nil {
-		recorder = m.metrics.Register(definition.Name, definition.Protocol)
-	}
 	switch definition.Protocol {
 	case "tcp":
 		runner := proxy.NewTCPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, tcpOptions(definition), observe.WithProxy(m.reporter, definition.Name))
@@ -524,6 +620,13 @@ func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, max
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", definition.Protocol)
 	}
+}
+
+func (m *Manager) metricRecorder(definition config.Proxy) metrics.Recorder {
+	if m.metrics == nil {
+		return metrics.Recorder{}
+	}
+	return m.metrics.Register(definition.Name, definition.Protocol)
 }
 
 func tcpOptions(definition config.Proxy) proxy.TCPOptions {
@@ -595,6 +698,17 @@ func proxyIndex(cfg config.Config, name string) int {
 		}
 	}
 	return -1
+}
+
+// deletedProxyNames returns names absent from the next configuration.
+func deletedProxyNames(previous, next config.Config) []string {
+	deleted := make([]string, 0)
+	for _, definition := range previous.Proxies {
+		if _, exists := findProxy(next, definition.Name); !exists {
+			deleted = append(deleted, definition.Name)
+		}
+	}
+	return deleted
 }
 
 // managedFilterIndex returns a managed filter's configuration index or -1.

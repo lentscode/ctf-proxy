@@ -71,13 +71,65 @@ func (r *Registry) Schedule() Schedule        { return r.schedule }
 func (r *Registry) CollectedSince() time.Time { return r.collectedSince }
 func (r *Registry) Register(name, protocol string) Recorder {
 	r.mu.Lock()
-	if r.identities[name] == nil {
-		r.identities[name] = &identity{name: name, protocol: protocol}
+	id := r.identities[name]
+	if id == nil {
+		id = &identity{name: name, protocol: protocol}
+		r.identities[name] = id
 	} else {
-		r.identities[name].protocol = protocol
+		id.protocol = protocol
 	}
 	r.mu.Unlock()
-	return Recorder{r: r, name: name, protocol: protocol}
+	return Recorder{r: r, identity: id}
+}
+
+// Has reports whether a metric series currently exists for name.
+func (r *Registry) Has(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.identities[name] != nil
+}
+
+// Rename moves one proxy's bounded metric series to a new name. Recorders
+// obtained before the rename continue to write to the moved series.
+func (r *Registry) Rename(oldName, newName, protocol string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	id := r.identities[oldName]
+	if id == nil {
+		return
+	}
+	if oldName != newName {
+		if existing := r.identities[newName]; existing != nil && existing != id {
+			return
+		}
+		delete(r.identities, oldName)
+		r.identities[newName] = id
+		for index := range r.buckets {
+			values := r.buckets[index].values
+			if values == nil {
+				continue
+			}
+			if value, exists := values[oldName]; exists {
+				delete(values, oldName)
+				values[newName] = value
+			}
+		}
+		id.name = newName
+	}
+	id.protocol = protocol
+}
+
+// Remove discards one proxy's bounded metric series. Existing recorders for
+// the removed series become no-ops and cannot contaminate a reused name.
+func (r *Registry) Remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	delete(r.identities, name)
+	for index := range r.buckets {
+		delete(r.buckets[index].values, name)
+	}
 }
 func (r *Registry) current(now time.Time) (int64, bool) {
 	if now.Before(r.schedule.CompetitionStart) {
@@ -85,13 +137,20 @@ func (r *Registry) current(now time.Time) (int64, bool) {
 	}
 	return int64(now.Sub(r.schedule.CompetitionStart) / r.schedule.RoundDuration), true
 }
-func (r *Registry) update(name string, fn func(*Values)) {
+func (r *Registry) update(id *identity, fn func(*Values)) {
+	if id == nil {
+		return
+	}
 	n, ok := r.current(time.Now().UTC())
 	if !ok {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	name := id.name
+	if r.identities[name] != id {
+		return
+	}
 	index := int(n % int64(len(r.buckets)))
 	b := &r.buckets[index]
 	if b.number != n || b.values == nil {
@@ -137,36 +196,31 @@ func (r *Registry) round(n int64) Round {
 	return Round{Number: n, StartsAt: s, EndsAt: s.Add(r.schedule.RoundDuration)}
 }
 func (r *Registry) Rounds(name string, limit int) ([]Round, bool) {
-	r.mu.Lock()
-	_, exists := r.identities[name]
-	r.mu.Unlock()
-	if !exists {
-		return nil, false
-	}
 	n, ok := r.current(time.Now().UTC())
-	if !ok {
-		return []Round{}, true
-	}
 	if limit > r.schedule.RetentionRounds {
 		limit = r.schedule.RetentionRounds
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id := r.identities[name]
+	if id == nil {
+		return nil, false
+	}
+	if !ok {
+		return []Round{}, true
 	}
 	start := n - int64(limit) + 1
 	if start < 0 {
 		start = 0
 	}
 	out := make([]Round, 0, n-start+1)
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for i := start; i <= n; i++ {
 		item := r.round(i)
 		if b := r.bucketLocked(i); b != nil {
 			item.Metrics = b.values[name]
 		}
-		id := r.identities[name]
-		if id != nil {
-			item.Metrics.ConnectionsActive = id.active.Load()
-			finalize(&item.Metrics, id.protocol)
-		}
+		item.Metrics.ConnectionsActive = id.active.Load()
+		finalize(&item.Metrics, id.protocol)
 		out = append(out, item)
 	}
 	return out, true
@@ -184,36 +238,26 @@ func finalize(v *Values, protocol string) {
 
 // Recorder is a proxy-bound metrics sink.
 type Recorder struct {
-	r              *Registry
-	name, protocol string
+	r        *Registry
+	identity *identity
 }
 
 func (x Recorder) add(fn func(*Values)) {
 	if x.r != nil {
-		x.r.update(x.name, fn)
+		x.r.update(x.identity, fn)
 	}
 }
 func (x Recorder) Request()  { x.add(func(v *Values) { v.Requests++ }) }
 func (x Recorder) Response() { x.add(func(v *Values) { v.Responses++ }) }
 func (x Recorder) AcceptedConnection() {
 	x.add(func(v *Values) { v.ConnectionsAccepted++ })
-	if x.r != nil {
-		x.r.mu.Lock()
-		id := x.r.identities[x.name]
-		x.r.mu.Unlock()
-		if id != nil {
-			id.active.Add(1)
-		}
+	if x.identity != nil {
+		x.identity.active.Add(1)
 	}
 }
 func (x Recorder) ClosedConnection() {
-	if x.r != nil {
-		x.r.mu.Lock()
-		id := x.r.identities[x.name]
-		x.r.mu.Unlock()
-		if id != nil {
-			id.active.Add(^uint64(0))
-		}
+	if x.identity != nil {
+		x.identity.active.Add(^uint64(0))
 	}
 }
 func (x Recorder) Chunk(server bool) {

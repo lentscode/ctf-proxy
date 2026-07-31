@@ -345,7 +345,8 @@ export async function createProxy(
   });
 }
 
-// replaceProxy replaces the named proxy while preserving its stable name.
+// replaceProxy replaces the named proxy. definition.name may rename the
+// resource identified by name.
 export async function replaceProxy(
   name: string,
   definition: ProxyDefinition,
