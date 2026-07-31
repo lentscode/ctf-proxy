@@ -307,7 +307,7 @@ function ManagedFilterActions({
     <div className="flex items-center gap-2 border-t border-zinc-700 pt-4">
       <button
         type="submit"
-        className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60"
+        className="min-h-9 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-primary disabled:cursor-wait disabled:opacity-60"
         disabled={isSaving}
       >
         {isSaving ? "Saving…" : isExisting ? "Save filter" : "Create filter"}
@@ -407,7 +407,7 @@ function ConditionEditor({
       </label>
       <button
         type="button"
-        className="h-10 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-xs font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 max-lg:col-span-2 max-sm:col-span-1"
+        className="h-10 cursor-pointer rounded-md border px-3 text-xs font-semibold transition button-danger disabled:cursor-not-allowed disabled:opacity-50 max-lg:col-span-2 max-sm:col-span-1"
         onClick={onRemove}
         disabled={!canRemove}
       >

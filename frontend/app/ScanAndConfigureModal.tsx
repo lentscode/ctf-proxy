@@ -311,7 +311,7 @@ export function ScanAndConfigureModal({
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  className="min-h-9 rounded-md border border-zinc-600 px-3 text-sm font-semibold text-zinc-100 hover:border-zinc-100 disabled:opacity-50"
+                  className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-danger disabled:opacity-50"
                   disabled={selectedCount === 0 || apply.isPending}
                   aria-haspopup="dialog"
                   onClick={() => setApplyDialogOpen(true)}
@@ -441,7 +441,7 @@ export function ScanAndConfigureModal({
               </button>
               <button
                 type="button"
-                className="min-h-9 rounded-md border border-zinc-400 px-3 text-sm font-semibold text-zinc-100 hover:border-zinc-100 disabled:cursor-wait disabled:opacity-50"
+                className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-danger disabled:cursor-wait disabled:opacity-50"
                 disabled={apply.isPending}
                 onClick={() => void apply.mutateAsync()}
               >

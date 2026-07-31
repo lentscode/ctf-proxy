@@ -121,7 +121,7 @@ export function EventStream({ onUnauthorized }: EventStreamProps) {
       {hasNewEvents && (
         <button
           type="button"
-          className="absolute right-4 bottom-4 h-8 cursor-pointer rounded-lg border border-zinc-200 bg-zinc-200 px-3 text-xs font-bold text-zinc-950 shadow-lg shadow-black/25"
+          className="absolute right-4 bottom-4 h-8 cursor-pointer rounded-lg border px-3 text-xs font-bold shadow-lg shadow-black/25 button-primary"
           onClick={returnToNewest}
         >
           New events

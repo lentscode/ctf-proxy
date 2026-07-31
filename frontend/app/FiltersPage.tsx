@@ -358,7 +358,7 @@ function ProxyFilterSection({
         </div>
         <button
           type="button"
-          className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900"
+          className="ml-auto min-h-9 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-primary"
           onClick={() => onEditorChange({ mode: "create", proxy })}
         >
           Add filter
@@ -499,7 +499,7 @@ function FilterRow({
           {onRemove && (
             <button
               type="button"
-              className="min-h-8 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-2.5 text-xs font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60"
+              className="min-h-8 cursor-pointer rounded-md border px-2.5 text-xs font-semibold transition button-danger disabled:cursor-wait disabled:opacity-60"
               onClick={onRemove}
               disabled={isRemoving}
             >
