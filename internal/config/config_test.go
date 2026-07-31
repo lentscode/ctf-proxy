@@ -100,6 +100,34 @@ proxies:
 	require.Equal(t, cfg, roundTrip)
 }
 
+func TestValidateMetricsConfiguration(t *testing.T) {
+	valid := &Metrics{CompetitionStart: time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC), RoundDuration: Duration(2 * time.Minute), RetentionRounds: 720}
+	for _, testCase := range []struct {
+		name    string
+		metrics *Metrics
+		wantErr string
+	}{
+		{name: "metrics remain optional", metrics: nil},
+		{name: "valid competition schedule", metrics: valid},
+		{name: "missing start", metrics: &Metrics{RoundDuration: Duration(time.Minute), RetentionRounds: 1}, wantErr: "competition_start"},
+		{name: "duration too short", metrics: &Metrics{CompetitionStart: valid.CompetitionStart, RoundDuration: Duration(59 * time.Second), RetentionRounds: 1}, wantErr: "round_duration"},
+		{name: "duration too long", metrics: &Metrics{CompetitionStart: valid.CompetitionStart, RoundDuration: Duration(61 * time.Minute), RetentionRounds: 1}, wantErr: "round_duration"},
+		{name: "retention too small", metrics: &Metrics{CompetitionStart: valid.CompetitionStart, RoundDuration: Duration(time.Minute), RetentionRounds: 0}, wantErr: "retention_rounds"},
+		{name: "retention too large", metrics: &Metrics{CompetitionStart: valid.CompetitionStart, RoundDuration: Duration(time.Minute), RetentionRounds: 4321}, wantErr: "retention_rounds"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := validConfig()
+			cfg.Metrics = testCase.metrics
+			err := cfg.Validate()
+			if testCase.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, testCase.wantErr)
+		})
+	}
+}
+
 // TestSaveReplacesConfigurationAndPreservesExistingPermissions covers atomic rewrite behavior.
 func TestSaveReplacesConfigurationAndPreservesExistingPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")

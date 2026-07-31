@@ -481,6 +481,53 @@ func TestAPIEventsValidatesLimitAndWorksWithoutEventHub(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
 }
 
+func TestAPIMetricsEndpoints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	start := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	require.NoError(t, config.Save(path, config.Config{Version: config.Version, Metrics: &config.Metrics{CompetitionStart: start, RoundDuration: config.Duration(time.Minute), RetentionRounds: 3}, Proxies: []config.Proxy{}}))
+	store, err := config.OpenStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	web := manager.Metrics().Register("web", "http")
+	web.Request()
+	web.Response()
+	web.Bytes(false, 12)
+	web.Reject(false)
+	handler := NewHandler(manager, []string{"test-token"})
+
+	for _, testCase := range []struct {
+		name, path string
+		wantStatus int
+		want       string
+	}{
+		{name: "summary", path: "/api/v1/metrics", wantStatus: http.StatusOK, want: `"requests":1`},
+		{name: "history", path: "/api/v1/metrics/rounds?proxy=web&limit=1", wantStatus: http.StatusOK, want: `"rounds"`},
+		{name: "missing proxy", path: "/api/v1/metrics/rounds?proxy=missing", wantStatus: http.StatusNotFound, want: `"not_found"`},
+		{name: "missing proxy parameter", path: "/api/v1/metrics/rounds", wantStatus: http.StatusBadRequest, want: `"proxy is required"`},
+		{name: "invalid limit", path: "/api/v1/metrics/rounds?proxy=web&limit=4", wantStatus: http.StatusBadRequest, want: `"limit must be between 1 and 3"`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := serveAPI(handler, http.MethodGet, testCase.path, "")
+			require.Equal(t, testCase.wantStatus, response.Code)
+			require.Contains(t, response.Body.String(), testCase.want)
+		})
+	}
+}
+
+func TestAPIMetricsAreUnavailableWithoutConfiguration(t *testing.T) {
+	_, handler := newControlAPITestServer(t)
+	for _, path := range []string{"/api/v1/metrics", "/api/v1/metrics/rounds?proxy=web"} {
+		t.Run(path, func(t *testing.T) {
+			response := serveAPI(handler, http.MethodGet, path, "")
+			require.Equal(t, http.StatusServiceUnavailable, response.Code)
+			require.Contains(t, response.Body.String(), `"unavailable"`)
+		})
+	}
+}
+
 // newControlAPITestServer constructs a fully wired authenticated control API.
 func newControlAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 	t.Helper()
