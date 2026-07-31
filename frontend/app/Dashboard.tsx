@@ -1,10 +1,10 @@
-import { EventStream } from './EventStream'
-import { ProxyTable } from './ProxyTable'
-import { MetricsPanel } from './MetricsPanel'
+import { EventStream } from "./EventStream";
+import { ProxyTable } from "./ProxyTable";
+import { MetricsPanel } from "./MetricsPanel";
 
 // DashboardProps contains the callback used when an API request loses authorization.
 interface DashboardProps {
-  onUnauthorized: () => void
+  onUnauthorized: () => void;
 }
 
 // Dashboard combines the proxy summary with the live operational event stream.
@@ -18,5 +18,5 @@ export function Dashboard({ onUnauthorized }: DashboardProps) {
         <EventStream onUnauthorized={onUnauthorized} />
       </div>
     </main>
-  )
+  );
 }
