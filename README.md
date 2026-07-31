@@ -36,6 +36,26 @@ trying again. Private restore records live beside the main config in
 ctf-proxy. Do not leave a service published on its original port outside this
 workflow while a matching proxy is active.
 
+## Competition traffic metrics
+
+Traffic metrics are optional, process-local, and bounded by competition rounds.
+They contain aggregate counts and payload-byte totals only; no request bodies,
+URLs, headers, addresses, or credentials are retained. Configure them in the
+main YAML file before the competition:
+
+```yaml
+metrics:
+  competition_start: "2026-07-31T08:00:00Z"
+  round_duration: 2m
+  retention_rounds: 720
+```
+
+Rounds are anchored to `competition_start`; the example retains 24 hours of
+two-minute rounds. History resets when ctf-proxy restarts. The authenticated
+dashboard shows the current round and retained per-service history. The same
+data is available from `GET /api/v1/metrics` and
+`GET /api/v1/metrics/rounds?proxy=NAME`.
+
 ## Development
 
 Run the dashboard and local API with `pnpm dev`. Release builds use:

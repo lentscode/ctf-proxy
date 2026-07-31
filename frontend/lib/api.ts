@@ -70,6 +70,10 @@ const composeProjectSchema = z.object({ name:z.string(), compose_file:z.string()
 const composeDiscoverySchema = z.object({ projects:z.array(composeProjectSchema), revision:z.string() })
 const deploymentSchema = z.object({ id:z.string(), project:z.string(), compose_file:z.string(), service:z.string(), listen:z.string(), upstream:z.string(), proxy:z.string(), protocol:z.enum(['tcp','http']), state:z.string() })
 const deploymentsSchema = z.object({ deployments:z.array(deploymentSchema) })
+const metricValuesSchema = z.object({ requests:z.number().optional(), responses:z.number().optional(), connections_accepted:z.number().optional(), connections_active:z.number().optional(), client_chunks:z.number().optional(), server_chunks:z.number().optional(), client_to_upstream_bytes:z.number(), upstream_to_client_bytes:z.number(), rejections_total:z.number(), filter_rejections:z.number(), capacity_rejections:z.number(), upstream_failures:z.number(), rejection_denominator:z.number(), rejection_ratio:z.number() })
+const metricRoundSchema = z.object({ number:z.number(), starts_at:z.string().datetime({ offset:true }), ends_at:z.string().datetime({ offset:true }), metrics:metricValuesSchema })
+const metricsSchema = z.object({ collected_since:z.string().datetime({ offset:true }), schedule:z.object({ competition_start:z.string().datetime({ offset:true }), round_duration_seconds:z.number(), retention_rounds:z.number() }), current_round:metricRoundSchema.nullable(), proxies:z.array(z.object({ name:z.string(), protocol:z.enum(['tcp','http']), configured:z.boolean(), metrics:metricValuesSchema })) })
+const metricRoundsSchema = z.object({ rounds:z.array(metricRoundSchema) })
 
 // ProxyView is the server's proxy representation, including runtime state.
 export type ProxyView = z.infer<typeof proxyViewSchema>
@@ -85,6 +89,9 @@ export type ScanCandidate = z.infer<typeof composeCandidateSchema>
 export type ScanProject = z.infer<typeof composeProjectSchema>
 export type ManagedDeployment = z.infer<typeof deploymentSchema>
 export type ScanDiscovery = z.infer<typeof composeDiscoverySchema>
+export type MetricValues = z.infer<typeof metricValuesSchema>
+export type MetricRound = z.infer<typeof metricRoundSchema>
+export type MetricsSummary = z.infer<typeof metricsSchema>
 // Compose* aliases preserve the dashboard's operator-facing naming while the
 // API module also exposes the more explicit Scan*/Managed* names above.
 export type ComposeCandidate = ScanCandidate
@@ -148,6 +155,9 @@ export async function getEvents(): Promise<ObserveEvent[]> {
 export async function getFilters(): Promise<FilterView[]> {
   return (await request('/api/v1/filters', filtersSchema)).filters
 }
+
+export async function getMetrics(): Promise<MetricsSummary> { return request('/api/v1/metrics', metricsSchema) }
+export async function getMetricRounds(proxy: string): Promise<MetricRound[]> { return (await request(`/api/v1/metrics/rounds?proxy=${encodeURIComponent(proxy)}`, metricRoundsSchema)).rounds }
 
 export async function scanProjects(): Promise<z.infer<typeof composeDiscoverySchema>> { return request('/api/v1/scan-and-configure/projects', composeDiscoverySchema) }
 export async function getManagedDeployments(): Promise<ManagedDeployment[]> { return (await request('/api/v1/scan-and-configure/deployments', deploymentsSchema)).deployments }

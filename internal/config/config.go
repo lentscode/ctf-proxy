@@ -43,7 +43,15 @@ type Config struct {
 	MaxConnections     int                 `yaml:"max_connections,omitempty"`
 	FilterFiles        []string            `yaml:"filter_files,omitempty"`
 	ManagedYAMLFilters []ManagedYAMLFilter `yaml:"managed_yaml_filters,omitempty"`
+	Metrics            *Metrics            `yaml:"metrics,omitempty"`
 	Proxies            []Proxy             `yaml:"proxies"`
+}
+
+// Metrics configures bounded, competition-round traffic aggregation.
+type Metrics struct {
+	CompetitionStart time.Time `yaml:"competition_start"`
+	RoundDuration    Duration  `yaml:"round_duration"`
+	RetentionRounds  int       `yaml:"retention_rounds"`
 }
 
 // ManagedYAMLFilter is an API-managed, single-rule YAML filter document.
@@ -263,6 +271,18 @@ func (c Config) Validate() error {
 	if c.MaxConnections < 0 || c.MaxConnections > MaxConnectionsLimit {
 		return fmt.Errorf("max_connections must be between 0 and %d", MaxConnectionsLimit)
 	}
+	if c.Metrics != nil {
+		if c.Metrics.CompetitionStart.IsZero() || c.Metrics.CompetitionStart.Location() != time.UTC || c.Metrics.CompetitionStart.Format(time.RFC3339) == "" {
+			return errors.New("metrics.competition_start must be a UTC RFC3339 timestamp")
+		}
+		d := time.Duration(c.Metrics.RoundDuration)
+		if d < time.Minute || d > time.Hour || d%time.Second != 0 {
+			return errors.New("metrics.round_duration must be a whole-second duration between 1m and 1h")
+		}
+		if c.Metrics.RetentionRounds < 1 || c.Metrics.RetentionRounds > 4320 {
+			return errors.New("metrics.retention_rounds must be between 1 and 4320")
+		}
+	}
 	for index, path := range c.FilterFiles {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("filter_files at index %d is empty", index)
@@ -315,6 +335,10 @@ func clone(cfg Config) Config {
 	copy := cfg
 	copy.FilterFiles = append([]string(nil), cfg.FilterFiles...)
 	copy.ManagedYAMLFilters = append([]ManagedYAMLFilter(nil), cfg.ManagedYAMLFilters...)
+	if cfg.Metrics != nil {
+		metrics := *cfg.Metrics
+		copy.Metrics = &metrics
+	}
 	copy.Proxies = make([]Proxy, len(cfg.Proxies))
 	for index, proxy := range cfg.Proxies {
 		copy.Proxies[index] = proxy
