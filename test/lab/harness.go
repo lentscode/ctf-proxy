@@ -98,7 +98,7 @@ func (l *lab) setup() {
 	l.run(l.repo, nil, "go", "build", "-tags", "production", "-o", l.binary, "./cmd/ctf-proxy")
 	config := filepath.Join(l.root, "ctf-proxy.yaml")
 	tokens := filepath.Join(l.root, ".tokens")
-	configuration := fmt.Sprintf("version: 1\nfilter_files:\n  - %q\nproxies: []\n", filepath.Join(l.repo, "test", "lab", "filters.yaml"))
+	configuration := fmt.Sprintf("version: 1\nmetrics:\n  competition_start: %q\n  round_duration: 2m\n  retention_rounds: 720\nfilter_files:\n  - %q\nproxies: []\n", time.Now().UTC().Format(time.RFC3339), filepath.Join(l.repo, "test", "lab", "filters.yaml"))
 	if err := os.WriteFile(config, []byte(configuration), 0o600); err != nil {
 		l.t.Fatalf("write config: %v", err)
 	}

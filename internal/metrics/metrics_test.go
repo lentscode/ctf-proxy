@@ -58,6 +58,15 @@ func TestRegistryDropsTrafficBeforeCompetitionStart(t *testing.T) {
 	require.Empty(t, proxies)
 }
 
+func TestRegistryRecordsInFirstRound(t *testing.T) {
+	registry := New(Schedule{CompetitionStart: time.Now().UTC(), RoundDuration: time.Minute, RetentionRounds: 1})
+	registry.Register("web", "http").Request()
+	_, summaries, current := registry.Current()
+	require.True(t, current)
+	require.Len(t, summaries, 1)
+	require.Equal(t, uint64(1), summaries[0].Metrics.Requests)
+}
+
 func TestValuesJSONFieldNamesAreDistinct(t *testing.T) {
 	values := Values{Requests: 1, Responses: 2, ConnectionsAccepted: 3, ConnectionsActive: 4, ClientChunks: 5, ServerChunks: 6, ClientToUpstreamBytes: 7, UpstreamToClientBytes: 8, RejectionsTotal: 9, FilterRejections: 10, CapacityRejections: 11}
 	data, err := json.Marshal(values)
