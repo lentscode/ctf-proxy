@@ -13,7 +13,30 @@ test("operator can scan, configure, and restore a Compose deployment", async ({
   await expect(page.getByText("demo (compose.yaml)")).toBeVisible();
   const selection = page.getByLabel(/Select web .*18080/);
   await expect(selection).toBeEnabled();
+  const protocol = page.getByLabel(/Protocol for web .*18080/);
+  await expect(protocol).toBeDisabled();
+  const disabledStyle = await protocol.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      color: style.color,
+    };
+  });
+  await expect(protocol).toHaveCSS("opacity", "1");
   await selection.check();
+  await expect(protocol).toBeEnabled();
+  const enabledStyle = await protocol.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      color: style.color,
+    };
+  });
+  expect(disabledStyle.background).not.toBe(enabledStyle.background);
+  expect(disabledStyle.border).not.toBe(enabledStyle.border);
+  expect(disabledStyle.color).not.toBe(enabledStyle.color);
   await page.getByRole("button", { name: "Apply 1 selected" }).click();
   await page.getByRole("button", { name: "Confirm" }).click();
 
