@@ -164,7 +164,7 @@ function DiscoverySection({
           </p>
         </div>
         <button
-          className="min-h-9 rounded-md border border-zinc-600 px-3 text-sm font-semibold hover:border-zinc-100 disabled:opacity-60"
+          className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-primary disabled:opacity-60"
           onClick={onScan}
           disabled={isScanning}
         >
@@ -344,7 +344,7 @@ function ApplyConfirmation({
   return (
     <div className="mt-5 flex items-center gap-3">
       <button
-        className="min-h-9 rounded-md border border-zinc-600 px-3 text-sm font-semibold hover:border-zinc-100 disabled:opacity-50"
+        className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-danger disabled:opacity-50"
         disabled={selectedCount === 0 || isApplying}
         onClick={onRequestApply}
       >
@@ -354,7 +354,7 @@ function ApplyConfirmation({
         <div className="flex items-center gap-2 text-sm">
           <span>This recreates affected services and starts proxies.</span>
           <button
-            className="rounded border border-zinc-400 px-2 py-1 font-semibold"
+            className="rounded border px-2 py-1 font-semibold transition button-danger"
             onClick={onConfirm}
           >
             Confirm
