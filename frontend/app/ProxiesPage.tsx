@@ -196,7 +196,7 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
           </button>
           <button
             type="button"
-            className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900"
+            className="min-h-9 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-primary"
             onClick={() => selectProxy(undefined)}
           >
             Add proxy
@@ -533,7 +533,7 @@ function FilterAssignments({
           </select>
           <button
             type="button"
-            className="min-h-10 shrink-0 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-10 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-primary disabled:cursor-not-allowed disabled:opacity-50"
             onClick={onAttach}
             disabled={!selectedFilter}
           >
@@ -591,7 +591,7 @@ function AttachedFilters({
           </span>
           <button
             type="button"
-            className="shrink-0 cursor-pointer bg-transparent p-0 text-xs font-semibold text-zinc-400 underline underline-offset-3 transition hover:text-zinc-100"
+            className="shrink-0 cursor-pointer bg-transparent p-0 text-xs font-semibold underline underline-offset-3 transition link-danger"
             onClick={() => onDetach(name)}
           >
             Detach
@@ -615,7 +615,7 @@ function ProxyEditorActions({
     <div className="flex items-center gap-2 border-t border-zinc-700 pt-1">
       <button
         type="submit"
-        className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60"
+        className="min-h-9 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-primary disabled:cursor-wait disabled:opacity-60"
         disabled={isSaving}
       >
         {isSaving ? "Saving…" : "Save proxy"}
@@ -623,7 +623,7 @@ function ProxyEditorActions({
       {onDelete && (
         <button
           type="button"
-          className="ml-auto min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60"
+          className="ml-auto min-h-9 cursor-pointer rounded-md border px-3 text-sm font-semibold transition button-danger disabled:cursor-wait disabled:opacity-60"
           onClick={onDelete}
           disabled={isDeleting}
         >

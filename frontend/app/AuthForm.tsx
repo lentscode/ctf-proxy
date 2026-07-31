@@ -53,7 +53,7 @@ export function AuthForm({
       <button
         type="submit"
         disabled={isConnecting}
-        className="h-12 cursor-pointer rounded-lg border border-zinc-200 bg-zinc-200 font-bold text-zinc-950 transition hover:bg-white disabled:cursor-wait disabled:opacity-75"
+        className="h-12 cursor-pointer rounded-lg border font-bold transition button-primary disabled:cursor-wait disabled:opacity-75"
       >
         {isConnecting ? "Connecting…" : "Continue"}
       </button>

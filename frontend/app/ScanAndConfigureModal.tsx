@@ -239,19 +239,8 @@ export function ScanAndConfigureModal({
                       return (
                         <div
                           key={candidate.id}
-                          className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-b-0 max-md:grid-cols-1"
+                          className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-3 border-b border-zinc-800 px-4 py-3 last:border-b-0 max-md:grid-cols-1"
                         >
-                          <input
-                            aria-label={`Select ${candidate.service} ${candidate.listen}`}
-                            type="checkbox"
-                            checked={choice.selected}
-                            disabled={!candidate.eligible}
-                            onChange={(event) =>
-                              update(candidate, {
-                                selected: event.target.checked,
-                              })
-                            }
-                          />
                           <div>
                             <p className="m-0 text-sm text-zinc-100">
                               {candidate.service} ·{" "}
@@ -266,6 +255,32 @@ export function ScanAndConfigureModal({
                               </p>
                             )}
                           </div>
+                          <button
+                            type="button"
+                            aria-pressed={choice.selected}
+                            aria-label={
+                              !candidate.eligible
+                                ? `Unavailable ${candidate.service} ${candidate.listen}`
+                                : `${choice.selected ? "Deselect" : "Select"} ${candidate.service} ${candidate.listen}`
+                            }
+                            disabled={!candidate.eligible}
+                            onClick={() =>
+                              update(candidate, {
+                                selected: !choice.selected,
+                              })
+                            }
+                            className={`min-h-9 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold outline-none transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-500 disabled:opacity-100 md:col-start-4 md:row-start-1 ${
+                              choice.selected
+                                ? "border-emerald-700 bg-emerald-950 text-emerald-100 hover:border-emerald-400 hover:bg-emerald-900"
+                                : "border-zinc-600 bg-transparent text-zinc-100 hover:border-zinc-100 hover:bg-zinc-900"
+                            }`}
+                          >
+                            {!candidate.eligible
+                              ? "Unavailable"
+                              : choice.selected
+                                ? "Selected"
+                                : "Select service"}
+                          </button>
                           {candidate.eligible && (
                             <select
                               aria-label={`Protocol for ${candidate.service} ${candidate.listen}`}
@@ -277,7 +292,7 @@ export function ScanAndConfigureModal({
                                 })
                               }
                               disabled={!choice.selected}
-                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100"
+                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100 md:col-start-2 md:row-start-1"
                             >
                               <option value="tcp">TCP</option>
                               <option value="http">HTTP</option>
@@ -294,7 +309,7 @@ export function ScanAndConfigureModal({
                                 })
                               }
                               disabled={!choice.selected}
-                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100"
+                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100 md:col-start-3 md:row-start-1"
                             >
                               <option value="http">HTTP</option>
                               <option value="https">HTTPS</option>
@@ -311,7 +326,7 @@ export function ScanAndConfigureModal({
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  className="min-h-9 rounded-md border border-zinc-600 px-3 text-sm font-semibold text-zinc-100 hover:border-zinc-100 disabled:opacity-50"
+                  className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-danger disabled:opacity-50"
                   disabled={selectedCount === 0 || apply.isPending}
                   aria-haspopup="dialog"
                   onClick={() => setApplyDialogOpen(true)}
@@ -441,7 +456,7 @@ export function ScanAndConfigureModal({
               </button>
               <button
                 type="button"
-                className="min-h-9 rounded-md border border-zinc-400 px-3 text-sm font-semibold text-zinc-100 hover:border-zinc-100 disabled:cursor-wait disabled:opacity-50"
+                className="min-h-9 rounded-md border px-3 text-sm font-semibold transition button-danger disabled:cursor-wait disabled:opacity-50"
                 disabled={apply.isPending}
                 onClick={() => void apply.mutateAsync()}
               >
