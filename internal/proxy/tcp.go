@@ -226,21 +226,6 @@ func writeAllCounting(dst io.Writer, data []byte, count func(int)) error {
 	return nil
 }
 
-// writeAll handles writers that accept only a prefix of the supplied data.
-func writeAll(dst io.Writer, data []byte) error {
-	for len(data) > 0 {
-		n, err := dst.Write(data)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-		data = data[n:]
-	}
-	return nil
-}
-
 // closeWrite half-closes a TCP connection when supported by its concrete type.
 func closeWrite(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
