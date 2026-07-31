@@ -94,7 +94,7 @@ func (r *Registry) update(name string, fn func(*Values)) {
 	defer r.mu.Unlock()
 	index := int(n % int64(len(r.buckets)))
 	b := &r.buckets[index]
-	if b.number != n {
+	if b.number != n || b.values == nil {
 		b.number = n
 		b.values = make(map[string]Values)
 	}

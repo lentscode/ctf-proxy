@@ -165,7 +165,7 @@ func (e *environment) start() error {
 		return err
 	}
 	config, tokens := filepath.Join(e.root, "ctf-proxy.yaml"), filepath.Join(e.root, ".tokens")
-	configuration := fmt.Sprintf("version: 1\nfilter_files:\n  - %q\nproxies: []\n", filepath.Join(e.repo, "test", "lab", "filters.yaml"))
+	configuration := fmt.Sprintf("version: 1\nmetrics:\n  competition_start: %q\n  round_duration: 2m\n  retention_rounds: 720\nfilter_files:\n  - %q\nproxies: []\n", time.Now().UTC().Format(time.RFC3339), filepath.Join(e.repo, "test", "lab", "filters.yaml"))
 	if err := os.WriteFile(config, []byte(configuration), 0o600); err != nil {
 		return err
 	}
