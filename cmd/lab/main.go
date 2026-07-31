@@ -50,21 +50,26 @@ type environment struct {
 
 func main() {
 	traffic := flag.String("traffic", string(trafficNone), "background traffic mode: none or mixed")
+	trafficInterval := flag.Duration("traffic-interval", 200*time.Millisecond, "interval between background traffic rounds")
 	flag.Parse()
 	mode := trafficMode(*traffic)
 	if mode != trafficNone && mode != trafficMixed {
 		fmt.Fprintln(os.Stderr, "ctf-proxy lab: --traffic must be none or mixed")
 		os.Exit(2)
 	}
+	if *trafficInterval <= 0 {
+		fmt.Fprintln(os.Stderr, "ctf-proxy lab: --traffic-interval must be greater than zero")
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, mode); err != nil {
+	if err := run(ctx, mode, *trafficInterval); err != nil {
 		fmt.Fprintln(os.Stderr, "ctf-proxy lab:", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, traffic trafficMode) (result error) {
+func run(ctx context.Context, traffic trafficMode, trafficInterval time.Duration) (result error) {
 	if err := preflight(); err != nil {
 		return err
 	}
@@ -101,7 +106,7 @@ func run(ctx context.Context, traffic trafficMode) (result error) {
 		return err
 	}
 	env.printInstructions()
-	env.startTraffic(ctx, traffic)
+	env.startTraffic(ctx, traffic, trafficInterval)
 
 	select {
 	case <-ctx.Done():
@@ -241,12 +246,11 @@ func (e *environment) printInstructions() {
 // startTraffic repeatedly runs the existing Python client CLIs. Errors are
 // intentionally ignored because listener recreation during takeover and
 // restoration briefly interrupts individual exchanges.
-func (e *environment) startTraffic(ctx context.Context, mode trafficMode) {
+func (e *environment) startTraffic(ctx context.Context, mode trafficMode, interval time.Duration) {
 	if mode == trafficNone {
 		return
 	}
-	const interval = 2 * time.Second
-	fmt.Println("\nBackground mixed traffic started (one request every 2s; 80% benign, 20% exploit).")
+	fmt.Printf("\nBackground mixed traffic started (one request to every service every %s; 80%% benign, 20%% exploit per request).\n", interval)
 	trafficContext, stop := context.WithCancel(ctx)
 	e.trafficStop = stop
 	e.trafficDone = make(chan struct{})
@@ -284,16 +288,32 @@ func (e *environment) runTrafficCycle(ctx context.Context, mode trafficMode) {
 	if mode != trafficMixed {
 		return
 	}
-	if mathrand.IntN(5) != 0 {
-		benign := []trafficRequest{
-			{service: "tcp-echo", args: []string{"--message", "lab-heartbeat"}},
-			{service: "tcp-archive"},
-			{service: "http-login", args: []string{"--username", "alice", "--password", "wonderland"}},
-			{service: "http-template"},
-		}
-		request := benign[mathrand.IntN(len(benign))]
-		e.runClient(ctx, request.service, request.args...)
-		return
+	requests := trafficRequests()
+	var clients sync.WaitGroup
+	clients.Add(len(requests))
+	for _, request := range requests {
+		go func(request trafficRequest) {
+			defer clients.Done()
+			e.runClient(ctx, request.service, request.args...)
+		}(request)
+	}
+	clients.Wait()
+}
+
+type trafficRequest struct {
+	service string
+	args    []string
+}
+
+// trafficRequests selects one request for each fixture service. Each request
+// independently has an 80% chance of being benign and a 20% chance of being an
+// exploit, so a traffic round exercises every service concurrently.
+func trafficRequests() []trafficRequest {
+	benign := []trafficRequest{
+		{service: "tcp-echo", args: []string{"--message", "lab-heartbeat"}},
+		{service: "tcp-archive"},
+		{service: "http-login", args: []string{"--username", "alice", "--password", "wonderland"}},
+		{service: "http-template"},
 	}
 	malicious := []trafficRequest{
 		{service: "tcp-echo", args: []string{"--admin"}},
@@ -301,13 +321,14 @@ func (e *environment) runTrafficCycle(ctx context.Context, mode trafficMode) {
 		{service: "http-login", args: []string{"--admin-exploit"}},
 		{service: "http-template", args: []string{"--exploit"}},
 	}
-	request := malicious[mathrand.IntN(len(malicious))]
-	e.runClient(ctx, request.service, request.args...)
-}
-
-type trafficRequest struct {
-	service string
-	args    []string
+	requests := make([]trafficRequest, len(benign))
+	for index := range benign {
+		requests[index] = benign[index]
+		if mathrand.IntN(5) == 0 {
+			requests[index] = malicious[index]
+		}
+	}
+	return requests
 }
 
 func (e *environment) runClient(ctx context.Context, service string, args ...string) {

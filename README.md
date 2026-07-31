@@ -113,13 +113,15 @@ filter form to exercise that workflow. Press
 Use `pnpm lab:up:keep` to retain the generated configuration, staged Compose
 files, and logs after shutdown.
 
-Start benign background traffic with:
+Start mixed background traffic with:
 
 ```sh
 pnpm lab:up:traffic
 ```
 
-It sends one request every two seconds: an 80% chance of a benign echo,
-archive, login, or template request, and a 20% chance of one lab exploit. The
-exploit requests intentionally retrieve fake flags before filters are attached
-and produce rejection events afterwards.
+By default it starts a round every 200 ms, launching one request to every lab
+service concurrently. Each request has an 80% chance of being benign and a
+20% chance of being an exploit. Set another cadence with
+`go run ./cmd/lab --traffic=mixed --traffic-interval=1s`. Exploit requests
+intentionally retrieve fake flags before filters are attached and produce
+rejection events afterwards.
