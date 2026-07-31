@@ -452,7 +452,7 @@ func (m *Manager) applyLockedWithRenames(next config.Config, renames []proxyRena
 				m.stopLocked(name)
 			}
 			rollbackMetrics()
-			m.removeNewMetricSeries(started, metricsExisted)
+			m.removeNewMetricSeries(append(started, definition.Name), metricsExisted)
 			m.restoreLocked(stopped, m.catalog, previous.MaxConnections)
 			if errors.Is(err, ErrConflict) {
 				return err
