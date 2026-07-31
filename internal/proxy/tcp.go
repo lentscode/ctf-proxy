@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/metrics"
 	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
@@ -34,7 +35,11 @@ type TCPProxy struct {
 
 	filters  *filter.Chain
 	reporter observe.Reporter
+	metrics  metrics.Recorder
 }
+
+// SetMetrics attaches a proxy-bound aggregate recorder.
+func (p *TCPProxy) SetMetrics(recorder metrics.Recorder) { p.metrics = recorder }
 
 // NewTCPProxy constructs a TCP runner with a shared connection budget and filter chain.
 func NewTCPProxy(listenAddr, upstreamAddr string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *TCPProxy {
@@ -97,9 +102,12 @@ func (p *TCPProxy) serve(ctx context.Context, listener net.Listener) error {
 		case p.slots <- struct{}{}:
 			go func() {
 				defer func() { <-p.slots }()
+				p.metrics.AcceptedConnection()
+				defer p.metrics.ClosedConnection()
 				_ = p.forward(client)
 			}()
 		default:
+			p.metrics.Reject(true)
 			_ = client.Close()
 		}
 	}
@@ -111,6 +119,7 @@ func (p *TCPProxy) forward(client net.Conn) error {
 
 	upstream, err := (&net.Dialer{Timeout: p.options.DialTimeout}).Dial("tcp", p.upstreamAddr)
 	if err != nil {
+		p.metrics.UpstreamFailure()
 		p.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyUpstreamUnavailable, Message: "TCP upstream unavailable"})
 		return err
 	}
@@ -172,6 +181,7 @@ func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connectio
 		}
 		n, readErr := src.Read(buffer)
 		if n > 0 {
+			p.metrics.Chunk(direction == filter.DirectionResponse)
 			decision := p.filters.Evaluate(context.Background(), filter.Message{
 				Protocol:   filter.ProtocolTCP,
 				Direction:  direction,
@@ -179,12 +189,13 @@ func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connectio
 				TCP:        &filter.TCPMessage{Data: buffer[:n]},
 			})
 			if decision.Action == filter.ActionReject {
+				p.metrics.Reject(false)
 				return errTCPFilterRejected
 			}
 			if p.options.WriteTimeout > 0 {
 				_ = dst.SetWriteDeadline(time.Now().Add(p.options.WriteTimeout))
 			}
-			if err := writeAll(dst, buffer[:n]); err != nil {
+			if err := writeAllCounting(dst, buffer[:n], func(written int) { p.metrics.Bytes(direction == filter.DirectionResponse, written) }); err != nil {
 				return err
 			}
 		}
@@ -196,6 +207,23 @@ func (p *TCPProxy) copy(dst, src net.Conn, direction filter.Direction, connectio
 			return readErr
 		}
 	}
+}
+
+func writeAllCounting(dst io.Writer, data []byte, count func(int)) error {
+	for len(data) > 0 {
+		n, err := dst.Write(data)
+		if n > 0 {
+			count(n)
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }
 
 // writeAll handles writers that accept only a prefix of the supplied data.

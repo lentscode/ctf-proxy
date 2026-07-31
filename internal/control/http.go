@@ -13,6 +13,7 @@ import (
 
 	"github.com/lentscode/ctf-proxy/internal/compose"
 	"github.com/lentscode/ctf-proxy/internal/config"
+	"github.com/lentscode/ctf-proxy/internal/metrics"
 	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
@@ -152,6 +153,14 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.eventStream(w, r)
 		return
 	}
+	if r.URL.Path == "/api/v1/metrics" {
+		a.metrics(w, r)
+		return
+	}
+	if r.URL.Path == "/api/v1/metrics/rounds" {
+		a.metricRounds(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/v1/scan-and-configure") {
 		a.scanAndConfigureRoutes(w, r)
 		return
@@ -162,6 +171,78 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+type metricsResponse struct {
+	CollectedSince time.Time `json:"collected_since"`
+	Schedule       struct {
+		CompetitionStart     time.Time `json:"competition_start"`
+		RoundDurationSeconds int64     `json:"round_duration_seconds"`
+		RetentionRounds      int       `json:"retention_rounds"`
+	} `json:"schedule"`
+	CurrentRound *metrics.Round         `json:"current_round"`
+	Proxies      []metrics.ProxySummary `json:"proxies"`
+}
+
+func (a *api) metrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	registry := a.manager.Metrics()
+	if registry == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "metrics are not configured")
+		return
+	}
+	round, proxies, current := registry.Current()
+	configured := make(map[string]struct{})
+	for _, proxy := range a.manager.List() {
+		configured[proxy.Name] = struct{}{}
+	}
+	for index := range proxies {
+		_, proxies[index].Configured = configured[proxies[index].Name]
+	}
+	response := metricsResponse{CollectedSince: registry.CollectedSince(), Proxies: proxies}
+	schedule := registry.Schedule()
+	response.Schedule.CompetitionStart = schedule.CompetitionStart
+	response.Schedule.RoundDurationSeconds = int64(schedule.RoundDuration / time.Second)
+	response.Schedule.RetentionRounds = schedule.RetentionRounds
+	if current {
+		response.CurrentRound = &round
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (a *api) metricRounds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	registry := a.manager.Metrics()
+	if registry == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "metrics are not configured")
+		return
+	}
+	name := r.URL.Query().Get("proxy")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "proxy is required")
+		return
+	}
+	limit := registry.Schedule().RetentionRounds
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > limit {
+			writeError(w, http.StatusBadRequest, "validation_error", fmt.Sprintf("limit must be between 1 and %d", limit))
+			return
+		}
+		limit = parsed
+	}
+	rounds, ok := registry.Rounds(name, limit)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "proxy metrics not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rounds": rounds})
 }
 
 func (a *api) scanAndConfigureRoutes(w http.ResponseWriter, r *http.Request) {

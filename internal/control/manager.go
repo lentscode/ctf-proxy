@@ -14,6 +14,7 @@ import (
 
 	"github.com/lentscode/ctf-proxy/internal/config"
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/metrics"
 	"github.com/lentscode/ctf-proxy/internal/observe"
 	"github.com/lentscode/ctf-proxy/internal/proxy"
 )
@@ -93,6 +94,7 @@ type Manager struct {
 	cancel     context.CancelFunc
 	running    map[string]*managedProxy
 	states     map[string]State
+	metrics    *metrics.Registry
 }
 
 // NewManager loads the immutable startup filter catalog and constructs a
@@ -107,6 +109,9 @@ func NewManager(store *config.Store, configPath string, reporters ...observe.Rep
 	}
 	cfg := store.Snapshot()
 	manager := &Manager{store: store, reporter: reporter, configPath: configPath, running: make(map[string]*managedProxy), states: make(map[string]State)}
+	if cfg.Metrics != nil {
+		manager.metrics = metrics.New(metrics.Schedule{CompetitionStart: cfg.Metrics.CompetitionStart, RoundDuration: time.Duration(cfg.Metrics.RoundDuration), RetentionRounds: cfg.Metrics.RetentionRounds})
+	}
 	catalog, err := manager.catalogFor(cfg)
 	if err != nil {
 		return nil, err
@@ -114,6 +119,9 @@ func NewManager(store *config.Store, configPath string, reporters ...observe.Rep
 	manager.catalog = catalog
 	return manager, nil
 }
+
+// Metrics returns the optional process-local traffic registry.
+func (m *Manager) Metrics() *metrics.Registry { return m.metrics }
 
 // Start starts all active configured proxies. It is valid for cfg to contain no
 // proxies, in which case only the control plane is started.
@@ -500,11 +508,19 @@ func (m *Manager) runnerFor(definition config.Proxy, catalog *filterCatalog, max
 		maxConnections = defaultMaxConnections
 	}
 	slots := make(chan struct{}, maxConnections)
+	recorder := metrics.Recorder{}
+	if m.metrics != nil {
+		recorder = m.metrics.Register(definition.Name, definition.Protocol)
+	}
 	switch definition.Protocol {
 	case "tcp":
-		return proxy.NewTCPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, tcpOptions(definition), observe.WithProxy(m.reporter, definition.Name)), nil
+		runner := proxy.NewTCPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, tcpOptions(definition), observe.WithProxy(m.reporter, definition.Name))
+		runner.SetMetrics(recorder)
+		return runner, nil
 	case "http":
-		return proxy.NewHTTPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, httpOptions(definition), observe.WithProxy(m.reporter, definition.Name)), nil
+		runner := proxy.NewHTTPProxyWithOptions(definition.Listen, definition.Upstream, slots, chain, httpOptions(definition), observe.WithProxy(m.reporter, definition.Name))
+		runner.SetMetrics(recorder)
+		return runner, nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", definition.Protocol)
 	}

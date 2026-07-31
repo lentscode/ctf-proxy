@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lentscode/ctf-proxy/internal/filter"
+	"github.com/lentscode/ctf-proxy/internal/metrics"
 	"github.com/lentscode/ctf-proxy/internal/observe"
 )
 
@@ -51,7 +52,11 @@ type HTTPProxy struct {
 	upstream  *url.URL
 	filters   *filter.Chain
 	reporter  observe.Reporter
+	metrics   metrics.Recorder
 }
+
+// SetMetrics attaches a proxy-bound aggregate recorder.
+func (p *HTTPProxy) SetMetrics(recorder metrics.Recorder) { p.metrics = recorder }
 
 // NewHTTPProxy constructs an HTTP runner with a shared request budget and filter chain.
 func NewHTTPProxy(listenAddr, upstreamUrl string, slots chan struct{}, filters *filter.Chain, reporters ...observe.Reporter) *HTTPProxy {
@@ -202,7 +207,10 @@ func newHTTPServer(handler http.Handler, options HTTPOptions) *http.Server {
 
 // ServeHTTP filters and forwards one request, then filters the upstream response.
 func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.metrics.Request()
 	if !p.acquireSlot() {
+		p.metrics.Reject(true)
+		p.metrics.Response()
 		http.Error(w, "proxy is busy", http.StatusServiceUnavailable)
 		return
 	}
@@ -210,15 +218,21 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	requestMessage, err := p.requestFilterMessage(r)
 	if err != nil {
+		p.metrics.Response()
 		http.Error(w, "request body unavailable", http.StatusBadRequest)
 		return
 	}
 	if p.filters.Evaluate(r.Context(), requestMessage).Action == filter.ActionReject {
+		p.metrics.Reject(false)
+		p.metrics.Response()
 		writeFilterRejection(w)
 		return
 	}
 
 	outbound := r.Clone(r.Context())
+	if outbound.Body != nil {
+		outbound.Body = &countingReadCloser{ReadCloser: outbound.Body, count: func(n int) { p.metrics.Bytes(false, n) }}
+	}
 
 	outbound.RequestURI = ""
 	outbound.URL.Scheme = p.upstream.Scheme
@@ -231,6 +245,8 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	res, err := p.transport.RoundTrip(outbound)
 	if err != nil {
+		p.metrics.UpstreamFailure()
+		p.metrics.Response()
 		p.reporter.Report(observe.Event{Level: observe.LevelError, Component: observe.ComponentProxy, Kind: observe.KindProxyUpstreamUnavailable, Message: "HTTP upstream unavailable"})
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
@@ -239,10 +255,14 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	responseMessage, err := p.responseFilterMessage(res)
 	if err != nil {
+		p.metrics.UpstreamFailure()
+		p.metrics.Response()
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
 	if p.filters.Evaluate(r.Context(), responseMessage).Action == filter.ActionReject {
+		p.metrics.Reject(false)
+		p.metrics.Response()
 		writeFilterRejection(w)
 		return
 	}
@@ -256,11 +276,25 @@ func (p *HTTPProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(res.StatusCode)
+	p.metrics.Response()
 
-	if _, err := io.Copy(w, res.Body); err != nil {
+	if _, err := io.Copy(w, &countingReadCloser{ReadCloser: res.Body, count: func(n int) { p.metrics.Bytes(true, n) }}); err != nil {
 		//TODO(lentscode): error handling
 		return
 	}
+}
+
+type countingReadCloser struct {
+	io.ReadCloser
+	count func(int)
+}
+
+func (r *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	if n > 0 && r.count != nil {
+		r.count(n)
+	}
+	return n, err
 }
 
 // requestFilterMessage builds the request view and buffers its body when required.
