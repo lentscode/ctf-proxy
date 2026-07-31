@@ -255,6 +255,32 @@ export function ScanAndConfigureModal({
                               </p>
                             )}
                           </div>
+                          <button
+                            type="button"
+                            aria-pressed={choice.selected}
+                            aria-label={
+                              !candidate.eligible
+                                ? `Unavailable ${candidate.service} ${candidate.listen}`
+                                : `${choice.selected ? "Deselect" : "Select"} ${candidate.service} ${candidate.listen}`
+                            }
+                            disabled={!candidate.eligible}
+                            onClick={() =>
+                              update(candidate, {
+                                selected: !choice.selected,
+                              })
+                            }
+                            className={`min-h-9 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold outline-none transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-100 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-500 disabled:opacity-100 md:col-start-4 md:row-start-1 ${
+                              choice.selected
+                                ? "border-emerald-700 bg-emerald-950 text-emerald-100 hover:border-emerald-400 hover:bg-emerald-900"
+                                : "border-zinc-600 bg-transparent text-zinc-100 hover:border-zinc-100 hover:bg-zinc-900"
+                            }`}
+                          >
+                            {!candidate.eligible
+                              ? "Unavailable"
+                              : choice.selected
+                                ? "Selected"
+                                : "Select service"}
+                          </button>
                           {candidate.eligible && (
                             <select
                               aria-label={`Protocol for ${candidate.service} ${candidate.listen}`}
@@ -266,7 +292,7 @@ export function ScanAndConfigureModal({
                                 })
                               }
                               disabled={!choice.selected}
-                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100"
+                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100 md:col-start-2 md:row-start-1"
                             >
                               <option value="tcp">TCP</option>
                               <option value="http">HTTP</option>
@@ -283,34 +309,12 @@ export function ScanAndConfigureModal({
                                 })
                               }
                               disabled={!choice.selected}
-                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100"
+                              className="h-9 rounded border border-zinc-600 bg-zinc-950 px-2 text-sm text-zinc-100 md:col-start-3 md:row-start-1"
                             >
                               <option value="http">HTTP</option>
                               <option value="https">HTTPS</option>
                             </select>
                           )}
-                          <button
-                            type="button"
-                            aria-pressed={choice.selected}
-                            aria-label={`${choice.selected ? "Deselect" : "Select"} ${candidate.service} ${candidate.listen}`}
-                            disabled={!candidate.eligible}
-                            onClick={() =>
-                              update(candidate, {
-                                selected: !choice.selected,
-                              })
-                            }
-                            className={`min-h-9 shrink-0 cursor-pointer rounded-md border px-3 text-sm font-semibold transition focus:outline-none focus:ring-3 focus:ring-white/10 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-500 disabled:opacity-100 ${
-                              choice.selected
-                                ? "border-emerald-700 bg-emerald-950 text-emerald-100 hover:border-emerald-400 hover:bg-emerald-900"
-                                : "border-zinc-600 bg-transparent text-zinc-100 hover:border-zinc-100 hover:bg-zinc-900"
-                            }`}
-                          >
-                            {!candidate.eligible
-                              ? "Unavailable"
-                              : choice.selected
-                                ? "Selected"
-                                : "Select service"}
-                          </button>
                         </div>
                       );
                     })}
