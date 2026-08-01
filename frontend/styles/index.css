@@ -9,6 +9,11 @@ body,
   background-color: var(--color-zinc-950);
 }
 
+/* Buttons should consistently advertise their interactive state. */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
 /*
  * Disabled controls need a distinct surface as well as a muted label. Opacity
  * alone leaves dark form controls looking active, particularly native selects.
