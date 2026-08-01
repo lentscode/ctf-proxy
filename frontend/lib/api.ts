@@ -13,6 +13,8 @@ export class APIError extends Error {
   }
 }
 
+// Response schemas form the browser's trust boundary: even the authenticated
+// local API is parsed before its data can affect dashboard state.
 const proxyStateSchema = z.enum(["running", "inactive", "failed"]);
 const proxyViewSchema = z.object({
   name: z.string(),
@@ -229,9 +231,11 @@ export async function getFilters(): Promise<FilterView[]> {
   return (await request("/api/v1/filters", filtersSchema)).filters;
 }
 
+// getMetrics fetches the current competition round and every configured proxy.
 export async function getMetrics(): Promise<MetricsSummary> {
   return request("/api/v1/metrics", metricsSchema);
 }
+// getMetricRounds fetches retained history for one proxy, with URL-safe names.
 export async function getMetricRounds(proxy: string): Promise<MetricRound[]> {
   return (
     await request(
@@ -241,16 +245,19 @@ export async function getMetricRounds(proxy: string): Promise<MetricRound[]> {
   ).rounds;
 }
 
+// scanProjects discovers eligible published Compose mappings without editing them.
 export async function scanProjects(): Promise<
   z.infer<typeof composeDiscoverySchema>
 > {
   return request("/api/v1/scan-and-configure/projects", composeDiscoverySchema);
 }
+// getManagedDeployments lists takeovers that can be restored by the operator.
 export async function getManagedDeployments(): Promise<ManagedDeployment[]> {
   return (
     await request("/api/v1/scan-and-configure/deployments", deploymentsSchema)
   ).deployments;
 }
+// applyScanConfiguration commits an operator-reviewed set of Compose takeovers.
 export async function applyScanConfiguration(
   revision: string,
   selections: Array<{
@@ -267,6 +274,7 @@ export async function applyScanConfiguration(
     })
   ).deployments;
 }
+// restoreManagedDeployments restores selected deployments, or all when requested.
 export async function restoreManagedDeployments(
   ids: string[],
   all = false,

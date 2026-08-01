@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-// Schedule defines competition-aligned retention.
+// Schedule defines competition-aligned retention. Round zero begins exactly at
+// CompetitionStart; traffic before that point is intentionally not recorded.
 type Schedule struct {
 	CompetitionStart time.Time
 	RoundDuration    time.Duration
@@ -15,6 +16,8 @@ type Schedule struct {
 }
 
 // Values are safe aggregate payload counters. No traffic metadata is retained.
+// RejectionDenominator and RejectionRatio are derived when results are read,
+// rather than incremented by recorders.
 type Values struct {
 	Requests              uint64  `json:"requests,omitempty"`
 	Responses             uint64  `json:"responses,omitempty"`
@@ -39,6 +42,9 @@ type Round struct {
 	EndsAt   time.Time `json:"ends_at"`
 	Metrics  Values    `json:"metrics"`
 }
+
+// ProxySummary combines a currently configured proxy's identity with metrics
+// from the requested round. A proxy is included even when it has no traffic.
 type ProxySummary struct {
 	Name       string `json:"name"`
 	Protocol   string `json:"protocol"`
@@ -55,7 +61,9 @@ type identity struct {
 	active         atomic.Uint64
 }
 
-// Registry is intentionally synchronous and bounded by retention and known proxies.
+// Registry is intentionally synchronous and bounded by retention and known
+// proxies. It uses a fixed-size ring: a new round overwrites only the bucket
+// that has aged past RetentionRounds.
 type Registry struct {
 	mu             sync.Mutex
 	schedule       Schedule
@@ -64,11 +72,19 @@ type Registry struct {
 	identities     map[string]*identity
 }
 
+// New creates an empty registry for a validated competition schedule.
 func New(schedule Schedule) *Registry {
 	return &Registry{schedule: schedule, collectedSince: time.Now().UTC(), buckets: make([]bucket, schedule.RetentionRounds), identities: make(map[string]*identity)}
 }
-func (r *Registry) Schedule() Schedule        { return r.schedule }
+
+// Schedule returns the immutable schedule used to place traffic into rounds.
+func (r *Registry) Schedule() Schedule { return r.schedule }
+
+// CollectedSince returns the time at which this in-memory registry was created.
 func (r *Registry) CollectedSince() time.Time { return r.collectedSince }
+
+// Register creates or refreshes the identity used by a proxy-bound Recorder.
+// Existing recorders remain attached to that identity across a protocol update.
 func (r *Registry) Register(name, protocol string) Recorder {
 	r.mu.Lock()
 	id := r.identities[name]
@@ -131,12 +147,18 @@ func (r *Registry) Remove(name string) {
 		delete(r.buckets[index].values, name)
 	}
 }
+
+// current converts a timestamp to its competition round. The boolean prevents
+// pre-competition traffic from entering the ring.
 func (r *Registry) current(now time.Time) (int64, bool) {
 	if now.Before(r.schedule.CompetitionStart) {
 		return 0, false
 	}
 	return int64(now.Sub(r.schedule.CompetitionStart) / r.schedule.RoundDuration), true
 }
+
+// update applies one recorder mutation to the current bucket. Identity is
+// checked while locked so a stale recorder cannot recreate a removed series.
 func (r *Registry) update(id *identity, fn func(*Values)) {
 	if id == nil {
 		return
@@ -161,6 +183,9 @@ func (r *Registry) update(id *identity, fn func(*Values)) {
 	fn(&v)
 	b.values[name] = v
 }
+
+// Current returns the active round and summaries for every configured proxy.
+// It returns false before the configured competition start.
 func (r *Registry) Current() (Round, []ProxySummary, bool) {
 	n, ok := r.current(time.Now().UTC())
 	if !ok {
@@ -195,6 +220,9 @@ func (r *Registry) round(n int64) Round {
 	s := r.schedule.CompetitionStart.Add(time.Duration(n) * r.schedule.RoundDuration)
 	return Round{Number: n, StartsAt: s, EndsAt: s.Add(r.schedule.RoundDuration)}
 }
+
+// Rounds returns up to limit chronological rounds for name, including empty
+// rounds inside the retained window. The boolean is false when name is unknown.
 func (r *Registry) Rounds(name string, limit int) ([]Round, bool) {
 	n, ok := r.current(time.Now().UTC())
 	if limit > r.schedule.RetentionRounds {
@@ -225,6 +253,9 @@ func (r *Registry) Rounds(name string, limit int) ([]Round, bool) {
 	}
 	return out, true
 }
+
+// finalize derives the rejection rate using the unit the protocol admits:
+// TCP connections (including capacity rejections) or HTTP requests.
 func finalize(v *Values, protocol string) {
 	if protocol == "tcp" {
 		v.RejectionDenominator = v.ConnectionsAccepted + v.CapacityRejections
@@ -247,19 +278,29 @@ func (x Recorder) add(fn func(*Values)) {
 		x.r.update(x.identity, fn)
 	}
 }
-func (x Recorder) Request()  { x.add(func(v *Values) { v.Requests++ }) }
+
+// Request records an HTTP request admitted to its proxy handler.
+func (x Recorder) Request() { x.add(func(v *Values) { v.Requests++ }) }
+
+// Response records an HTTP response emitted by its proxy handler.
 func (x Recorder) Response() { x.add(func(v *Values) { v.Responses++ }) }
+
+// AcceptedConnection records a TCP connection and tracks it as active.
 func (x Recorder) AcceptedConnection() {
 	x.add(func(v *Values) { v.ConnectionsAccepted++ })
 	if x.identity != nil {
 		x.identity.active.Add(1)
 	}
 }
+
+// ClosedConnection removes one TCP connection from the active total.
 func (x Recorder) ClosedConnection() {
 	if x.identity != nil {
 		x.identity.active.Add(^uint64(0))
 	}
 }
+
+// Chunk records one successfully read TCP chunk in the requested direction.
 func (x Recorder) Chunk(server bool) {
 	x.add(func(v *Values) {
 		if server {
@@ -269,6 +310,8 @@ func (x Recorder) Chunk(server bool) {
 		}
 	})
 }
+
+// Bytes records forwarded traffic, ignoring non-positive write counts.
 func (x Recorder) Bytes(server bool, n int) {
 	if n <= 0 {
 		return
@@ -281,6 +324,8 @@ func (x Recorder) Bytes(server bool, n int) {
 		}
 	})
 }
+
+// Reject records a capacity or filter rejection for the current round.
 func (x Recorder) Reject(capacity bool) {
 	x.add(func(v *Values) {
 		v.RejectionsTotal++
@@ -291,4 +336,6 @@ func (x Recorder) Reject(capacity bool) {
 		}
 	})
 }
+
+// UpstreamFailure records a failed attempt to reach or use the upstream.
 func (x Recorder) UpstreamFailure() { x.add(func(v *Values) { v.UpstreamFailures++ }) }

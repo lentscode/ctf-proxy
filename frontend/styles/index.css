@@ -36,7 +36,7 @@ button:not(:disabled) {
 
 option:disabled {
   color: var(--color-zinc-500);
-}  
+}
 
 @utility button-primary {
   @apply border-zinc-200 bg-white text-black hover:border-white hover:bg-zinc-200;
