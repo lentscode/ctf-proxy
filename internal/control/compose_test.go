@@ -50,6 +50,7 @@ func TestAPIScanAndConfigureApplyAndRestore(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &deployments))
 	require.Len(t, deployments.Deployments, 1)
 	proxy := deployments.Deployments[0].Proxy
+	require.Equal(t, "demo-web", proxy)
 	response = serveAPI(handler, http.MethodGet, "/api/v1/proxies/"+proxy, "")
 	require.Equal(t, http.StatusOK, response.Code)
 
@@ -135,6 +136,19 @@ func TestAPIScanAndConfigureRollsBackComposeFailure(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &deployments))
 	require.Empty(t, deployments.Deployments)
+}
+
+func TestProxyNamesUseFolderAndServiceAndDisambiguateConflicts(t *testing.T) {
+	candidates := []compose.Candidate{
+		{ID: "aaaaaaaaaaaaaaaa", ComposeFile: "/services/login/compose.yaml", Service: "web"},
+		{ID: "bbbbbbbbbbbbbbbb", ComposeFile: "/services/login/compose.yaml", Service: "web"},
+		{ID: "cccccccccccccccc", ComposeFile: "/services/payments/compose.yaml", Service: "api"},
+	}
+
+	names := proxyNames(candidates, []ProxyView{{Name: "payments-api"}})
+	require.Equal(t, "login-web", names["aaaaaaaaaaaaaaaa"])
+	require.Equal(t, "login-web-bbbbbbbbbbbbbbbb", names["bbbbbbbbbbbbbbbb"])
+	require.Equal(t, "payments-api-cccccccccccccccc", names["cccccccccccccccc"])
 }
 
 func newComposeAPITestServer(t *testing.T, failUp bool) (string, string, http.Handler, *[]string) {
