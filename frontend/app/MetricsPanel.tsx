@@ -34,27 +34,40 @@ export function MetricsPanel({ onUnauthorized }: Props) {
   const summary = useQuery({
     queryKey: ["metrics"],
     queryFn: getMetrics,
-    refetchInterval: 5_000,
+    // Once the endpoint reports an error, leave the stable unavailable state in
+    // place. A configuration change invalidates this query and retries it.
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 5_000,
   });
   const [selected, setSelected] = useState<string>();
   const history = useQuery({
     queryKey: ["metrics", selected],
     queryFn: () => getMetricRounds(selected!),
     enabled: !!selected,
-    refetchInterval: 5_000,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : 5_000,
   });
   useEffect(() => {
     if (isUnauthorized(summary.error) || isUnauthorized(history.error))
       onUnauthorized();
   }, [summary.error, history.error, onUnauthorized]);
-  if (summary.isLoading)
+  const data = summary.data;
+  // The loading placeholder is only for the first request. Later refreshes must
+  // not replace an unavailable message with a skeleton.
+  if (!data && !summary.isFetched && summary.isFetching)
     return (
       <section
         className="mb-8 h-48 animate-pulse border border-zinc-800 bg-zinc-900"
         aria-label="Loading traffic metrics"
       />
     );
-  if (summary.error instanceof APIError && summary.error.status === 503)
+  if (
+    !data &&
+    summary.error instanceof APIError &&
+    summary.error.status === 503
+  )
     return (
       <section className="mb-8 border border-zinc-800 bg-zinc-900 p-5 text-sm text-zinc-400">
         Traffic metrics are disabled. Add a global{" "}
@@ -62,13 +75,12 @@ export function MetricsPanel({ onUnauthorized }: Props) {
         configuration.
       </section>
     );
-  if (summary.isError || !summary.data)
+  if (!data)
     return (
       <section className="mb-8 border border-red-900 bg-zinc-900 p-5 text-sm text-red-200">
         Unable to load traffic metrics.
       </section>
     );
-  const data = summary.data;
   return (
     <section
       className="mb-8 overflow-hidden border border-zinc-700 bg-zinc-950"
