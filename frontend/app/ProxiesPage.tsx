@@ -18,6 +18,7 @@ import {
 import { queryClient } from "../lib/query-client";
 import { toast } from "sonner";
 import { ScanAndConfigureModal } from "./ScanAndConfigureModal";
+import { supportsProtocol } from "./filter-compatibility";
 
 // ProxiesPageProps contains the callback used when any management request expires.
 interface ProxiesPageProps {
@@ -195,6 +196,12 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
           </h1>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <Link
+            className="min-h-9 rounded-md border border-zinc-600 bg-transparent px-3 py-2 text-sm font-semibold text-zinc-100 no-underline transition hover:border-zinc-100 hover:bg-zinc-900"
+            to="/filters"
+          >
+            Filter library
+          </Link>
           <button
             type="button"
             className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-100 transition hover:border-zinc-100 hover:bg-zinc-900 disabled:cursor-wait disabled:opacity-60"
@@ -293,12 +300,10 @@ function ProxyDirectoryItem({
           {proxy.protocol} · {proxy.listen}
         </span>
       </button>
-      <Link
-        className="text-xs font-semibold text-zinc-300 underline underline-offset-3 transition hover:text-zinc-100"
-        to="/filters"
-      >
-        Filter library · {proxy.filters.length}
-      </Link>
+      <span className="font-mono text-[11px] text-zinc-400">
+        {proxy.filters.length}{" "}
+        {proxy.filters.length === 1 ? "filter" : "filters"}
+      </span>
     </div>
   );
 }
@@ -342,8 +347,7 @@ function ProxyEditor({
     if (
       !filter ||
       draft.filters.includes(filter.name) ||
-      (filter.protocols.length > 0 &&
-        !filter.protocols.includes(draft.protocol))
+      !supportsProtocol(filter, draft.protocol)
     )
       return;
     update("filters", [...draft.filters, filter.name]);
@@ -537,17 +541,10 @@ function FilterOption({
   draft: ProxyDefinition;
 }) {
   const attached = draft.filters.includes(filter.name);
-  const compatible =
-    filter.protocols.length === 0 || filter.protocols.includes(draft.protocol);
+  const compatible = supportsProtocol(filter, draft.protocol);
   return (
     <option value={filter.name} disabled={attached || !compatible}>
-      {filterOptionLabel(
-        filter,
-        filter.assigned_proxies,
-        attached,
-        compatible,
-        draft.protocol,
-      )}
+      {filterOptionLabel(filter, attached, compatible, draft.protocol)}
     </option>
   );
 }
@@ -623,15 +620,14 @@ function toDefinition(proxy: ProxyView): ProxyDefinition {
 
 function filterOptionLabel(
   filter: FilterView,
-  assignedProxies: string[],
   attached: boolean,
   compatible: boolean,
   protocol: ProxyDefinition["protocol"],
 ): string {
   const assignment =
-    assignedProxies.length === 0
+    filter.assigned_proxies.length === 0
       ? "unassigned"
-      : `used by ${assignedProxies.join(", ")}`;
+      : `used by ${filter.assigned_proxies.join(", ")}`;
   if (attached) return `${filter.name} — attached to this proxy; ${assignment}`;
   if (!compatible)
     return `${filter.name} — incompatible with ${protocol.toUpperCase()}; ${assignment}`;

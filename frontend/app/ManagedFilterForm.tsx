@@ -21,7 +21,7 @@ interface ManagedFilterFormProps {
   isSaving: boolean;
   saveError?: string;
   onSave: (draft: ManagedFilterDraft) => Promise<void>;
-  onCancel: () => void;
+  onCancel?: () => void;
 }
 
 const operatorLabels: Record<typeof matchOperatorSchema._output, string> = {
@@ -301,7 +301,7 @@ function ManagedFilterActions({
 }: {
   isSaving: boolean;
   isExisting: boolean;
-  onCancel: () => void;
+  onCancel?: () => void;
 }) {
   return (
     <div className="flex items-center gap-2 border-t border-zinc-700 pt-4">
@@ -312,14 +312,16 @@ function ManagedFilterActions({
       >
         {isSaving ? "Saving…" : isExisting ? "Save filter" : "Create filter"}
       </button>
-      <button
-        type="button"
-        className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60"
-        onClick={onCancel}
-        disabled={isSaving}
-      >
-        Cancel
-      </button>
+      {onCancel && (
+        <button
+          type="button"
+          className="min-h-9 cursor-pointer rounded-md border border-zinc-600 bg-transparent px-3 text-sm font-semibold text-zinc-400 transition hover:border-zinc-100 hover:text-zinc-100 disabled:cursor-wait disabled:opacity-60"
+          onClick={onCancel}
+          disabled={isSaving}
+        >
+          Cancel
+        </button>
+      )}
     </div>
   );
 }

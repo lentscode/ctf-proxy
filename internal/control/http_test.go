@@ -229,6 +229,8 @@ func TestAPIFilterAssignmentsReplaceTheCompleteSet(t *testing.T) {
 			shared = filter
 		}
 	}
+	require.Equal(t, "file-rule", fileRule.Name)
+	require.Equal(t, "shared", shared.Name)
 	require.False(t, fileRule.Editable)
 	require.Empty(t, fileRule.AssignedProxies)
 	require.Equal(t, []string{"web-b"}, shared.AssignedProxies)

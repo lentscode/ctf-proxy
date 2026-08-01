@@ -8,11 +8,11 @@ test("operator can create an independent filter and assign it to multiple proxie
   await authenticate(page);
   await page.getByRole("link", { name: "Proxies" }).click();
 
-  for (const [name, listen, upstream] of [
+  for (const [index, [name, listen, upstream]] of [
     ["web-http-a", "127.0.0.1:31347", "http://127.0.0.1:31348"],
     ["web-http-b", "127.0.0.1:31349", "http://127.0.0.1:31350"],
-  ]) {
-    if (name !== "web-http-a") {
+  ].entries()) {
+    if (index > 0) {
       await page.getByRole("button", { name: "Add proxy" }).click();
     }
     await page.getByLabel("Name").fill(name);
@@ -23,7 +23,7 @@ test("operator can create an independent filter and assign it to multiple proxie
     await page.getByRole("button", { name: "Save proxy" }).click();
   }
 
-  await page.getByRole("link", { name: "Filter library · 0" }).first().click();
+  await page.getByRole("link", { name: "Filter library" }).click();
   await expect(page).toHaveURL(/\/filters$/);
   await page.getByRole("button", { name: "Add filter" }).click();
   await page.getByLabel("Filter name").fill("library-block-admin");
@@ -76,7 +76,11 @@ test("operator can create an independent filter and assign it to multiple proxie
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Delete filter" }).click();
+  await expect(page).toHaveURL(/\/filters$/);
   await expect(
-    page.getByRole("button", { name: /library-block-admin yaml/ }),
+    page.getByRole("heading", { name: "Add a filter", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("library-block-admin", { exact: true }),
   ).toHaveCount(0);
 });
