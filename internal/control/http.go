@@ -103,6 +103,10 @@ type yamlFilterInput struct {
 	YAML string `json:"yaml"`
 }
 
+type filterAssignmentsInput struct {
+	Proxies []string `json:"proxies"`
+}
+
 type composeApplyInput struct {
 	Revision   string              `json:"revision"`
 	Selections []compose.Selection `json:"selections"`
@@ -133,11 +137,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/v1/filters" {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"filters": a.manager.ListFilters()})
+		a.filters(w, r)
 		return
 	}
 	const filtersPrefix = "/api/v1/filters/"
@@ -171,6 +171,28 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+// filters handles collection-level filter listing and managed-filter creation.
+func (a *api) filters(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]any{"filters": a.manager.ListFilters()})
+	case http.MethodPost:
+		var input yamlFilterInput
+		if err := decodeJSON(r, &input); err != nil {
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+		view, err := a.manager.CreateManagedFilter(input.YAML)
+		if err != nil {
+			writeManagerError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, view)
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 type metricsResponse struct {
@@ -479,7 +501,8 @@ func (a *api) proxy(w http.ResponseWriter, r *http.Request, tail string) {
 	}
 }
 
-// proxyFilters handles filters assigned to one proxy.
+// proxyFilters retains the read-only compatibility view of filters assigned to
+// one proxy. Managed filters are created through the collection endpoint.
 func (a *api) proxyFilters(w http.ResponseWriter, r *http.Request, name string) {
 	switch r.Method {
 	case http.MethodGet:
@@ -489,29 +512,23 @@ func (a *api) proxyFilters(w http.ResponseWriter, r *http.Request, name string) 
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"filters": filters})
-	case http.MethodPost:
-		var input yamlFilterInput
-		if err := decodeJSON(r, &input); err != nil {
-			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
-			return
-		}
-		view, err := a.manager.CreateManagedFilter(name, input.YAML)
-		if err != nil {
-			writeManagerError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusCreated, view)
 	default:
 		methodNotAllowed(w)
 	}
 }
 
-// filter handles retrieval, replacement, and deletion of a managed filter.
-func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
-	if name == "" || strings.Contains(name, "/") {
+// filter handles a managed filter detail endpoint and assignment replacement.
+func (a *api) filter(w http.ResponseWriter, r *http.Request, tail string) {
+	parts := strings.Split(tail, "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "assignments" {
+		a.filterAssignments(w, r, parts[0])
+		return
+	}
+	if len(parts) != 1 || parts[0] == "" {
 		writeError(w, http.StatusNotFound, "not_found", "route not found")
 		return
 	}
+	name := parts[0]
 	switch r.Method {
 	case http.MethodGet:
 		view, err := a.manager.GetManagedFilter(name)
@@ -541,6 +558,25 @@ func (a *api) filter(w http.ResponseWriter, r *http.Request, name string) {
 	default:
 		methodNotAllowed(w)
 	}
+}
+
+// filterAssignments replaces the complete proxy assignment set for a filter.
+func (a *api) filterAssignments(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPut {
+		methodNotAllowed(w)
+		return
+	}
+	var input filterAssignmentsInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	view, err := a.manager.ReplaceFilterAssignments(name, input.Proxies)
+	if err != nil {
+		writeManagerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 // definition converts an API input into the configuration representation.

@@ -94,7 +94,8 @@ func TestAPIRejectsUnknownFilterWithoutPersisting(t *testing.T) {
 	require.Empty(t, store.Snapshot().Proxies)
 }
 
-// TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion covers managed filter ownership.
+// TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion covers independent
+// managed filter ownership and the proxy-scoped compatibility listing.
 func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
 	store, err := config.OpenOrCreateStore(path)
@@ -110,16 +111,20 @@ func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	require.Equal(t, http.StatusCreated, response.Code)
 
 	source := yamlFilterDocument("block-admin", "/admin")
-	response = serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/filters", `{"yaml":`+jsonString(source)+`}`)
+	response = serveAPI(handler, http.MethodPost, "/api/v1/filters", `{"yaml":`+jsonString(source)+`}`)
 	require.Equal(t, http.StatusCreated, response.Code)
 	var created ManagedFilterView
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
 	require.Equal(t, "block-admin", created.Name)
 	require.True(t, created.Editable)
 	require.Equal(t, source, created.YAML)
-	require.Equal(t, []string{"web"}, created.AssignedProxies)
-	require.Equal(t, []string{"block-admin"}, store.Snapshot().Proxies[0].Filters)
+	require.Empty(t, created.AssignedProxies)
+	require.Empty(t, store.Snapshot().Proxies[0].Filters)
 	require.Equal(t, source, store.Snapshot().ManagedYAMLFilters[0].YAML)
+
+	response = serveAPI(handler, http.MethodPut, "/api/v1/filters/block-admin/assignments", `{"proxies":["web"]}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, []string{"block-admin"}, store.Snapshot().Proxies[0].Filters)
 
 	response = serveAPI(handler, http.MethodGet, "/api/v1/proxies/web/filters", "")
 	require.Equal(t, http.StatusOK, response.Code)
@@ -129,6 +134,7 @@ func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &assigned))
 	require.Len(t, assigned.Filters, 1)
 	require.True(t, assigned.Filters[0].Editable)
+	require.Equal(t, []string{"web"}, assigned.Filters[0].AssignedProxies)
 
 	updated := yamlFilterDocument("block-admin", "/private")
 	response = serveAPI(handler, http.MethodPut, "/api/v1/filters/block-admin", `{"yaml":`+jsonString(updated)+`}`)
@@ -150,6 +156,84 @@ func TestAPIManagesYAMLFiltersAndPreservesThemAfterProxyDeletion(t *testing.T) {
 	require.Empty(t, store.Snapshot().ManagedYAMLFilters)
 }
 
+// TestAPIFilterAssignmentsReplaceTheCompleteSet verifies atomic assignment
+// replacement, order preservation, and validation without partial persistence.
+func TestAPIFilterAssignmentsReplaceTheCompleteSet(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ctf-proxy.yaml")
+	filterPath := filepath.Join(t.TempDir(), "global-filters.yaml")
+	require.NoError(t, os.WriteFile(filterPath, []byte(yamlFilterDocument("file-rule", "/health")), 0o600))
+	cfg := config.Config{
+		Version:     config.Version,
+		FilterFiles: []string{filterPath},
+		Proxies: []config.Proxy{
+			{Name: "web-a", Active: false, Protocol: "http", Listen: "127.0.0.1:31337", Upstream: "http://127.0.0.1:31338"},
+			{Name: "web-b", Active: false, Protocol: "http", Listen: "127.0.0.1:31339", Upstream: "http://127.0.0.1:31340"},
+			{Name: "tcp", Active: false, Protocol: "tcp", Listen: "127.0.0.1:31341", Upstream: "127.0.0.1:31342"},
+		},
+	}
+	require.NoError(t, config.Save(path, cfg))
+	store, err := config.OpenStore(path)
+	require.NoError(t, err)
+	manager, err := NewManager(store, path)
+	require.NoError(t, err)
+	require.NoError(t, manager.Start(context.Background()))
+	t.Cleanup(manager.Close)
+	handler := NewHandler(manager, []string{"test-token"})
+
+	for _, name := range []string{"first", "shared"} {
+		response := serveAPI(handler, http.MethodPost, "/api/v1/filters", `{"yaml":`+jsonString(yamlFilterDocument(name, "/admin"))+`}`)
+		require.Equal(t, http.StatusCreated, response.Code)
+	}
+	require.Equal(t, http.StatusOK, serveAPI(handler, http.MethodPut, "/api/v1/filters/first/assignments", `{"proxies":["web-a"]}`).Code)
+	require.Equal(t, http.StatusOK, serveAPI(handler, http.MethodPut, "/api/v1/filters/shared/assignments", `{"proxies":["web-a","web-b"]}`).Code)
+
+	snapshot := store.Snapshot()
+	require.Equal(t, []string{"first", "shared"}, snapshot.Proxies[0].Filters)
+	require.Equal(t, []string{"shared"}, snapshot.Proxies[1].Filters)
+
+	response := serveAPI(handler, http.MethodPut, "/api/v1/filters/shared/assignments", `{"proxies":["web-b"]}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	snapshot = store.Snapshot()
+	require.Equal(t, []string{"first"}, snapshot.Proxies[0].Filters)
+	require.Equal(t, []string{"shared"}, snapshot.Proxies[1].Filters)
+
+	before := store.Snapshot()
+	for _, testCase := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "unknown proxy", body: `{"proxies":["missing"]}`, want: http.StatusNotFound},
+		{name: "duplicate proxy", body: `{"proxies":["web-b","web-b"]}`, want: http.StatusBadRequest},
+		{name: "incompatible new proxy", body: `{"proxies":["web-b","tcp"]}`, want: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := serveAPI(handler, http.MethodPut, "/api/v1/filters/shared/assignments", testCase.body)
+			require.Equal(t, testCase.want, response.Code)
+			require.Equal(t, before, store.Snapshot())
+		})
+	}
+
+	response = serveAPI(handler, http.MethodGet, "/api/v1/filters", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		Filters []FilterView `json:"filters"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	var fileRule, shared FilterView
+	for _, filter := range body.Filters {
+		switch filter.Name {
+		case "file-rule":
+			fileRule = filter
+		case "shared":
+			shared = filter
+		}
+	}
+	require.False(t, fileRule.Editable)
+	require.Empty(t, fileRule.AssignedProxies)
+	require.Equal(t, []string{"web-b"}, shared.AssignedProxies)
+}
+
 // TestAPIManagedYAMLFilterValidation covers managed YAML shape and name validation.
 func TestAPIManagedYAMLFilterValidation(t *testing.T) {
 	for _, testCase := range []struct {
@@ -163,20 +247,17 @@ func TestAPIManagedYAMLFilterValidation(t *testing.T) {
 		assert     func(t *testing.T, store *config.Store)
 	}{
 		{
-			name: "invalid JSON", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{`, wantStatus: http.StatusBadRequest, wantBody: "invalid JSON",
+			name: "invalid JSON", method: http.MethodPost, path: "/api/v1/filters", body: `{`, wantStatus: http.StatusBadRequest, wantBody: "invalid JSON",
 		},
 		{
-			name: "unknown JSON field", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":"version: 1\nfilters: []\n","extra":true}`, wantStatus: http.StatusBadRequest, wantBody: "unknown field",
+			name: "unknown JSON field", method: http.MethodPost, path: "/api/v1/filters", body: `{"yaml":"version: 1\nfilters: []\n","extra":true}`, wantStatus: http.StatusBadRequest, wantBody: "unknown field",
 		},
 		{
-			name: "zero YAML rules", method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":"version: 1\nfilters: []\n"}`, wantStatus: http.StatusBadRequest, wantBody: "exactly one filter",
-		},
-		{
-			name: "missing proxy", method: http.MethodPost, path: "/api/v1/proxies/missing/filters", body: `{"yaml":` + jsonString(yamlFilterDocument("new-rule", "/admin")) + `}`, wantStatus: http.StatusNotFound,
+			name: "zero YAML rules", method: http.MethodPost, path: "/api/v1/filters", body: `{"yaml":"version: 1\nfilters: []\n"}`, wantStatus: http.StatusBadRequest, wantBody: "exactly one filter",
 		},
 		{
 			name:    "duplicate managed name",
-			arrange: arrangeManagedFilter("stable"), method: http.MethodPost, path: "/api/v1/proxies/web/filters", body: `{"yaml":` + jsonString(yamlFilterDocument("stable", "/private")) + `}`, wantStatus: http.StatusConflict, wantBody: "already exists",
+			arrange: arrangeManagedFilter("stable"), method: http.MethodPost, path: "/api/v1/filters", body: `{"yaml":` + jsonString(yamlFilterDocument("stable", "/private")) + `}`, wantStatus: http.StatusConflict, wantBody: "already exists",
 			assert: func(t *testing.T, store *config.Store) { require.Len(t, store.Snapshot().ManagedYAMLFilters, 1) },
 		},
 		{
@@ -230,7 +311,7 @@ func newFilterAPITestServer(t *testing.T) (*config.Store, http.Handler) {
 func arrangeManagedFilter(name string) func(t *testing.T, handler http.Handler) {
 	return func(t *testing.T, handler http.Handler) {
 		t.Helper()
-		response := serveAPI(handler, http.MethodPost, "/api/v1/proxies/web/filters", `{"yaml":`+jsonString(yamlFilterDocument(name, "/admin"))+`}`)
+		response := serveAPI(handler, http.MethodPost, "/api/v1/filters", `{"yaml":`+jsonString(yamlFilterDocument(name, "/admin"))+`}`)
 		require.Equal(t, http.StatusCreated, response.Code)
 	}
 }
@@ -449,8 +530,9 @@ func TestAPIRouteAndMethodValidation(t *testing.T) {
 	}{
 		{name: "health only allows GET", method: http.MethodPost, path: "/healthz", want: http.StatusMethodNotAllowed},
 		{name: "proxies only allow GET or POST", method: http.MethodPut, path: "/api/v1/proxies", want: http.StatusMethodNotAllowed},
-		{name: "proxy filters only allow GET or POST", method: http.MethodDelete, path: "/api/v1/proxies/web/filters", want: http.StatusMethodNotAllowed},
-		{name: "filters only allow GET", method: http.MethodPost, path: "/api/v1/filters", want: http.StatusMethodNotAllowed},
+		{name: "proxy filters only allow GET", method: http.MethodPost, path: "/api/v1/proxies/web/filters", want: http.StatusMethodNotAllowed},
+		{name: "filters collection only allows GET or POST", method: http.MethodPut, path: "/api/v1/filters", want: http.StatusMethodNotAllowed},
+		{name: "filter assignments only allow PUT", method: http.MethodGet, path: "/api/v1/filters/missing/assignments", want: http.StatusMethodNotAllowed},
 		{name: "events only allow GET", method: http.MethodPost, path: "/api/v1/events", want: http.StatusMethodNotAllowed},
 		{name: "stream only allows GET", method: http.MethodPost, path: "/api/v1/events/stream", want: http.StatusMethodNotAllowed},
 		{name: "unknown route", method: http.MethodGet, path: "/api/v1/unknown", want: http.StatusNotFound},
