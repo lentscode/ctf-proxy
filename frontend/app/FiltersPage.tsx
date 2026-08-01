@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -7,6 +7,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ManagedFilterForm } from "./ManagedFilterForm";
+import { supportsProtocol } from "./filter-compatibility";
 import {
   createEmptyDraft,
   parseManagedFilterYAML,
@@ -200,7 +201,13 @@ export function FiltersPage({ onUnauthorized }: FiltersPageProps) {
             onSelect={selectFilter}
           />
         )}
-        <section className="p-6" aria-labelledby="filter-editor-heading">
+        <section
+          className="p-6"
+          aria-labelledby={
+            editor?.mode === "create" ? undefined : "filter-editor-heading"
+          }
+          aria-label={editor?.mode === "create" ? "Add filter" : undefined}
+        >
           {editor?.mode === "create" ? (
             <ManagedFilterForm
               key="create"
@@ -411,7 +418,6 @@ function ManagedEditor({
       onSave={async (draft) => {
         await onSave(draft);
       }}
-      onCancel={() => undefined}
     />
   );
 }
@@ -429,8 +435,30 @@ function AssignmentPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>(filter.assigned_proxies);
+  const selector = useRef<HTMLDivElement>(null);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const changed = !sameNames(selected, filter.assigned_proxies);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !selector.current?.contains(event.target)
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    };
+  }, [open]);
 
   function toggle(name: string) {
     setSelected((current) =>
@@ -441,10 +469,7 @@ function AssignmentPanel({
   }
 
   const save = async () => {
-    const names = (proxies.data ?? [])
-      .filter((proxy) => selectedSet.has(proxy.name))
-      .map((proxy) => proxy.name);
-    await onSave(names);
+    await onSave(selected);
     setOpen(false);
   };
 
@@ -477,7 +502,7 @@ function AssignmentPanel({
         </p>
       )}
       {proxies.data && proxies.data.length > 0 && (
-        <div className="grid gap-3">
+        <div ref={selector} className="grid gap-3">
           <div className="relative justify-self-start">
             <button
               type="button"
@@ -575,13 +600,6 @@ function DeleteFilterAction({
       </div>
     </section>
   );
-}
-
-function supportsProtocol(
-  filter: FilterView,
-  protocol: ProxyView["protocol"],
-): boolean {
-  return filter.protocols.length === 0 || filter.protocols.includes(protocol);
 }
 
 function sameNames(left: string[], right: string[]): boolean {
