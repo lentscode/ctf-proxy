@@ -130,9 +130,13 @@ func (m *ComposeManager) Apply(rev string, selections []compose.Selection) ([]co
 	if err := compose.CheckCompose(ctx); err != nil {
 		return nil, errors.New("docker compose v2 is unavailable")
 	}
-	groups := make(map[string][]compose.Candidate)
+	selectedCandidates := make([]compose.Candidate, 0, len(chosen))
 	for id := range chosen {
-		c := byID[id]
+		selectedCandidates = append(selectedCandidates, byID[id])
+	}
+	namesByCandidate := proxyNames(selectedCandidates, m.proxies.List())
+	groups := make(map[string][]compose.Candidate)
+	for _, c := range selectedCandidates {
 		groups[c.ComposeFile] = append(groups[c.ComposeFile], c)
 	}
 	type applied struct {
@@ -181,10 +185,7 @@ func (m *ComposeManager) Apply(rev string, selections []compose.Selection) ([]co
 		services := make([]string, 0, len(candidates))
 		for _, c := range candidates {
 			choice := chosen[c.ID]
-			name := proxyName(c)
-			if _, err := m.proxies.Get(name); err == nil {
-				return nil, fmt.Errorf("proxy %q already exists", name)
-			}
+			name := namesByCandidate[c.ID]
 			upstream := c.Upstream
 			if choice.Protocol == "http" {
 				upstream = choice.Scheme + "://" + c.Upstream
@@ -302,12 +303,53 @@ func revision(projects []compose.Project) string {
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 func proxyName(c compose.Candidate) string {
-	port := strings.TrimPrefix(strings.TrimPrefix(c.Listen, "0.0.0.0"), ":")
-	base := unsafeName.ReplaceAllString(c.Project+"-"+c.Service+"-"+port, "-")
-	if len(base) > 46 {
-		base = base[:46]
+	folder := filepath.Base(filepath.Dir(c.ComposeFile))
+	base := unsafeName.ReplaceAllString(folder+"-"+c.Service, "-")
+	base = strings.Trim(base, "-")
+	if base == "" {
+		return "proxy"
 	}
-	return "ad-" + strings.Trim(base, "-") + "-" + c.ID[:8]
+	return trimProxyName(base, 63)
+}
+
+// proxyNames derives readable names from the service directory and Compose
+// service. A stable candidate ID is only added when that readable name is
+// already configured or another selected mapping needs it.
+func proxyNames(candidates []compose.Candidate, existing []ProxyView) map[string]string {
+	taken := make(map[string]struct{}, len(existing)+len(candidates))
+	for _, proxy := range existing {
+		taken[proxy.Name] = struct{}{}
+	}
+	sorted := append([]compose.Candidate(nil), candidates...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].ID < sorted[j].ID
+	})
+	names := make(map[string]string, len(candidates))
+	for _, candidate := range sorted {
+		base := proxyName(candidate)
+		name := base
+		if _, exists := taken[name]; exists {
+			suffix := "-" + candidate.ID
+			name = trimProxyName(base, 63-len(suffix)) + suffix
+			for attempt := 2; ; attempt++ {
+				if _, exists := taken[name]; !exists {
+					break
+				}
+				attemptSuffix := suffix + fmt.Sprintf("-%d", attempt)
+				name = trimProxyName(base, 63-len(attemptSuffix)) + attemptSuffix
+			}
+		}
+		taken[name] = struct{}{}
+		names[candidate.ID] = name
+	}
+	return names
+}
+
+func trimProxyName(name string, maximum int) string {
+	if len(name) > maximum {
+		name = name[:maximum]
+	}
+	return strings.TrimRight(name, "-")
 }
 func unique(values []string) []string {
 	set := map[string]bool{}
