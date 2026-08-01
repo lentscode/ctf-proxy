@@ -1,6 +1,5 @@
 // Package compose implements the deliberately narrow Docker Compose scan and
-// configuration workflow
-// workflow used by Attack & Defense CTF vulnboxes.
+// configuration workflow used by Attack & Defense CTF vulnboxes.
 package compose
 
 import (
@@ -71,11 +70,15 @@ type Deployment struct {
 	State       string `json:"state"`
 }
 
+// Entry identifies the original ports-list position used to rewrite a saved
+// deployment. The index is not exposed in the dashboard's Deployment view.
 type Entry struct {
 	Deployment
 	Index int `json:"index"`
 }
 
+// Record is the private recovery state required to restore an exact Compose
+// file after a mediated takeover.
 type Record struct {
 	ProjectPath string  `json:"project_path"`
 	ComposePath string  `json:"compose_path"`
@@ -135,6 +138,8 @@ func DiscoverWithNames(root string, names []string) ([]Project, error) {
 	return projects, nil
 }
 
+// validFileNames keeps configured names within each immediate project
+// directory; paths and duplicates cannot broaden a scan.
 func validFileNames(names []string) []string {
 	seen := make(map[string]struct{}, len(names))
 	valid := make([]string, 0, len(names))
@@ -238,6 +243,8 @@ func setMapValue(n *yaml.Node, key, value string) {
 	n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 }
 
+// parsePort accepts only explicit single TCP host mappings. Returning a reason
+// instead of an error lets discovery display unsupported mappings safely.
 func parsePort(node *yaml.Node) (string, string, string) {
 	if node.Kind == yaml.ScalarNode {
 		value := strings.TrimSuffix(node.Value, "/tcp")
@@ -283,6 +290,9 @@ func singlePort(value string) bool {
 	n, err := strconv.Atoi(value)
 	return err == nil && n > 0 && n <= 65535
 }
+
+// publicListen distinguishes mappings reachable off-host from loopback-only
+// mappings, which must never be taken over as public proxy listeners.
 func publicListen(value string) bool {
 	host, _, err := net.SplitHostPort(value)
 	if err != nil {
@@ -294,6 +304,9 @@ func publicListen(value string) bool {
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
 }
+
+// freePort reserves candidates in-process and probes loopback before assigning
+// private upstream ports. Docker remains responsible for the final bind.
 func freePort(reserved map[int]struct{}) (int, error) {
 	for p := 20000; p <= 59999; p++ {
 		if _, exists := reserved[p]; exists {
@@ -307,6 +320,9 @@ func freePort(reserved map[int]struct{}) (int, error) {
 	}
 	return 0, errors.New("no loopback port available")
 }
+
+// id creates a stable opaque candidate identifier from structural Compose
+// location, not user-controlled YAML values.
 func id(path, service string, index int) string {
 	sum := sha256.Sum256([]byte(path + "\x00" + service + "\x00" + strconv.Itoa(index)))
 	return hex.EncodeToString(sum[:8])
@@ -446,7 +462,11 @@ var RunCompose = func(ctx context.Context, dir string, args ...string) error {
 	return nil
 }
 
+// CheckCompose verifies that Docker Compose is available before a takeover.
 func CheckCompose(ctx context.Context) error { return RunCompose(ctx, "", "version") }
+
+// Recreate validates the rewritten file then recreates only the selected
+// services, leaving unrelated services in the project untouched.
 func Recreate(ctx context.Context, projectPath, composePath string, services []string) error {
 	if err := RunCompose(ctx, projectPath, "-f", composePath, "config", "-q"); err != nil {
 		return err
@@ -454,6 +474,8 @@ func Recreate(ctx context.Context, projectPath, composePath string, services []s
 	args := append([]string{"-f", composePath, "up", "-d", "--no-deps", "--force-recreate"}, services...)
 	return RunCompose(ctx, projectPath, args...)
 }
+
+// Context provides the bounded command lifetime used for every Compose action.
 func Context() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 45*time.Second)
 }
