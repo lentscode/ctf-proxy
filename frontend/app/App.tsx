@@ -58,7 +58,7 @@ function App() {
 
   if (!authenticated) {
     return (
-      <main className="grid min-h-svh place-items-center bg-zinc-950 p-4 font-sans text-zinc-200">
+      <main className="grid min-h-dvh place-items-center bg-zinc-950 p-4 font-sans text-zinc-200">
         <AuthForm
           token={token}
           error={authError}

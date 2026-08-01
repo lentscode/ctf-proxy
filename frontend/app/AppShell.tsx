@@ -11,7 +11,7 @@ interface AppShellProps {
 // AppShell provides navigation and the dashboard's client-side routes.
 export function AppShell({ onUnauthorized }: AppShellProps) {
   return (
-    <div className="grid min-h-svh grid-cols-[214px_minmax(0,1fr)] bg-zinc-950 font-sans text-zinc-200 max-lg:flex max-lg:flex-col">
+    <div className="grid min-h-dvh grid-cols-[214px_minmax(0,1fr)] bg-zinc-950 font-sans text-zinc-200 max-lg:flex max-lg:flex-col">
       <aside
         className="sticky top-0 flex h-svh flex-col self-start border-r border-zinc-700 p-4 pt-6 max-lg:static max-lg:h-auto max-lg:self-stretch max-lg:flex-none max-lg:flex-row max-lg:items-center max-lg:border-r-0 max-lg:border-b max-lg:px-4 max-lg:py-3.5"
         aria-label="Primary navigation"
