@@ -91,7 +91,9 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
     }) => replaceProxy(name, definition),
     onSuccess: async (proxy) => {
       await refresh();
-      toast.success("Proxy saved", { description: `${proxy.name} was updated.` });
+      toast.success("Proxy saved", {
+        description: `${proxy.name} was updated.`,
+      });
     },
     onError: (error) => {
       if (!isUnauthorized(error))
@@ -212,15 +214,9 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
       </header>
       <div className="grid min-h-140 grid-cols-[minmax(250px,0.8fr)_minmax(0,1.2fr)] max-lg:min-h-0 max-lg:grid-cols-1">
         <section
-          className="border-r border-zinc-700 p-6 max-lg:border-r-0 max-lg:border-b"
-          aria-labelledby="configured-proxies"
+          className="border-r border-zinc-700 px-6 max-lg:border-r-0 max-lg:border-b"
+          aria-label="Configured proxies"
         >
-          <h2
-            id="configured-proxies"
-            className="m-0 mb-5 text-base font-semibold text-zinc-100"
-          >
-            Configured proxies
-          </h2>
           {proxies.isLoading && (
             <p className="m-0 text-sm text-zinc-400">Loading proxies…</p>
           )}
@@ -259,7 +255,6 @@ export function ProxiesPage({ onUnauthorized }: ProxiesPageProps) {
               isDeleting={remove.isPending}
               filters={filters.data ?? []}
               filtersUnavailable={filters.isError}
-              assignments={filterAssignments(proxies.data ?? [])}
             />
           </section>
         )}
@@ -300,9 +295,9 @@ function ProxyDirectoryItem({
       </button>
       <Link
         className="text-xs font-semibold text-zinc-300 underline underline-offset-3 transition hover:text-zinc-100"
-        to={`/filters?proxy=${encodeURIComponent(proxy.name)}`}
+        to="/filters"
       >
-        Manage filters · {proxy.filters.length}
+        Filter library · {proxy.filters.length}
       </Link>
     </div>
   );
@@ -317,7 +312,6 @@ interface ProxyEditorProps {
   onDelete?: () => void;
   filters: FilterView[];
   filtersUnavailable: boolean;
-  assignments: Map<string, string[]>;
 }
 
 // ProxyEditor validates and submits a proxy definition together with filter choices.
@@ -329,7 +323,6 @@ function ProxyEditor({
   onDelete,
   filters,
   filtersUnavailable,
-  assignments,
 }: ProxyEditorProps) {
   const [draft, setDraft] = useState(initial);
   const [validationError, setValidationError] = useState<string | undefined>();
@@ -349,7 +342,8 @@ function ProxyEditor({
     if (
       !filter ||
       draft.filters.includes(filter.name) ||
-      !filter.protocols.includes(draft.protocol)
+      (filter.protocols.length > 0 &&
+        !filter.protocols.includes(draft.protocol))
     )
       return;
     update("filters", [...draft.filters, filter.name]);
@@ -379,15 +373,11 @@ function ProxyEditor({
 
   return (
     <form className="grid gap-6" onSubmit={(event) => void submit(event)}>
-      <ProxyDetailsFields
-        draft={draft}
-        onUpdate={update}
-      />
+      <ProxyDetailsFields draft={draft} onUpdate={update} />
       <FilterAssignments
         draft={draft}
         filters={filters}
         filtersUnavailable={filtersUnavailable}
-        assignments={assignments}
         selectedFilter={selectedFilter}
         onSelectedFilterChange={setSelectedFilter}
         onAttach={addFilter}
@@ -483,7 +473,6 @@ function FilterAssignments({
   draft,
   filters,
   filtersUnavailable,
-  assignments,
   selectedFilter,
   onSelectedFilterChange,
   onAttach,
@@ -492,7 +481,6 @@ function FilterAssignments({
   draft: ProxyDefinition;
   filters: FilterView[];
   filtersUnavailable: boolean;
-  assignments: Map<string, string[]>;
   selectedFilter: string;
   onSelectedFilterChange: (value: string) => void;
   onAttach: () => void;
@@ -523,12 +511,7 @@ function FilterAssignments({
           >
             <option value="">Select a filter to attach</option>
             {filters.map((filter) => (
-              <FilterOption
-                key={filter.name}
-                filter={filter}
-                draft={draft}
-                assignments={assignments}
-              />
+              <FilterOption key={filter.name} filter={filter} draft={draft} />
             ))}
           </select>
           <button
@@ -549,19 +532,18 @@ function FilterAssignments({
 function FilterOption({
   filter,
   draft,
-  assignments,
 }: {
   filter: FilterView;
   draft: ProxyDefinition;
-  assignments: Map<string, string[]>;
 }) {
   const attached = draft.filters.includes(filter.name);
-  const compatible = filter.protocols.includes(draft.protocol);
+  const compatible =
+    filter.protocols.length === 0 || filter.protocols.includes(draft.protocol);
   return (
     <option value={filter.name} disabled={attached || !compatible}>
       {filterOptionLabel(
         filter,
-        assignments.get(filter.name) ?? [],
+        filter.assigned_proxies,
         attached,
         compatible,
         draft.protocol,
@@ -637,18 +619,6 @@ function ProxyEditorActions({
 // toDefinition removes runtime-only proxy state before populating the editor.
 function toDefinition(proxy: ProxyView): ProxyDefinition {
   return proxyDefinitionSchema.parse(proxy);
-}
-
-function filterAssignments(proxies: ProxyView[]): Map<string, string[]> {
-  const assignments = new Map<string, string[]>();
-  for (const proxy of proxies) {
-    for (const name of proxy.filters) {
-      const current = assignments.get(name) ?? [];
-      current.push(proxy.name);
-      assignments.set(name, current);
-    }
-  }
-  return assignments;
 }
 
 function filterOptionLabel(

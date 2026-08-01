@@ -50,22 +50,23 @@ type ProxyView struct {
 	State    State    `json:"state"`
 }
 
-// FilterView describes a filter available for proxy selection.
+// FilterView describes a filter available for proxy selection and its current
+// proxy assignments.
 type FilterView struct {
-	Name          string   `json:"name"`
-	Active        bool     `json:"active"`
-	Source        string   `json:"source"`
-	Editable      bool     `json:"editable"`
-	Protocols     []string `json:"protocols"`
-	Directions    []string `json:"directions"`
-	NeedsHTTPBody bool     `json:"needs_http_body"`
+	Name            string   `json:"name"`
+	Active          bool     `json:"active"`
+	Source          string   `json:"source"`
+	Editable        bool     `json:"editable"`
+	Protocols       []string `json:"protocols"`
+	Directions      []string `json:"directions"`
+	NeedsHTTPBody   bool     `json:"needs_http_body"`
+	AssignedProxies []string `json:"assigned_proxies"`
 }
 
 // ManagedFilterView is the API representation of an editable YAML filter.
 type ManagedFilterView struct {
 	FilterView
-	YAML            string   `json:"yaml"`
-	AssignedProxies []string `json:"assigned_proxies"`
+	YAML string `json:"yaml"`
 }
 
 // filterCatalog combines compiled filters with their API metadata and sources.
@@ -196,8 +197,10 @@ func (m *Manager) Get(name string) (ProxyView, error) {
 func (m *Manager) ListFilters() []FilterView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	views := make([]FilterView, len(m.catalog.views))
-	copy(views, m.catalog.views)
+	views := make([]FilterView, 0, len(m.catalog.views))
+	for _, view := range m.catalog.views {
+		views = append(views, m.filterViewLocked(view.Name))
+	}
 	return views
 }
 
@@ -209,8 +212,7 @@ func (m *Manager) GetManagedFilter(name string) (ManagedFilterView, error) {
 	if !ok {
 		return ManagedFilterView{}, ErrNotFound
 	}
-	view := m.catalog.byName[name]
-	return ManagedFilterView{FilterView: view, YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}, nil
+	return ManagedFilterView{FilterView: m.filterViewLocked(name), YAML: managed.YAML}, nil
 }
 
 // ListProxyFilters returns the available filter metadata assigned to a proxy.
@@ -224,21 +226,17 @@ func (m *Manager) ListProxyFilters(name string) ([]FilterView, error) {
 	views := make([]FilterView, 0, len(definition.Filters))
 	for _, filterName := range definition.Filters {
 		if view, exists := m.catalog.byName[filterName]; exists {
-			views = append(views, view)
+			views = append(views, m.filterViewLocked(view.Name))
 		}
 	}
 	return views, nil
 }
 
-// CreateManagedFilter compiles, persists, and assigns a new YAML filter.
-func (m *Manager) CreateManagedFilter(proxyName, source string) (ManagedFilterView, error) {
+// CreateManagedFilter compiles and persists a new unassigned YAML filter.
+func (m *Manager) CreateManagedFilter(source string) (ManagedFilterView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	next := m.store.Snapshot()
-	index := proxyIndex(next, proxyName)
-	if index < 0 {
-		return ManagedFilterView{}, ErrNotFound
-	}
 	compiled, err := singleYAMLFilter(source)
 	if err != nil {
 		return ManagedFilterView{}, err
@@ -248,12 +246,61 @@ func (m *Manager) CreateManagedFilter(proxyName, source string) (ManagedFilterVi
 		return ManagedFilterView{}, fmt.Errorf("%w: filter %q already exists", ErrConflict, name)
 	}
 	next.ManagedYAMLFilters = append(next.ManagedYAMLFilters, config.ManagedYAMLFilter{Name: name, YAML: source})
-	next.Proxies[index].Filters = append(next.Proxies[index].Filters, name)
 	if err := m.applyLocked(next); err != nil {
 		m.reportControlFailure(err)
 		return ManagedFilterView{}, err
 	}
 	return m.managedViewLocked(name), nil
+}
+
+// ReplaceFilterAssignments atomically makes proxyNames the complete assignment
+// set for filterName. Existing ordering is retained and newly assigned filters
+// are appended to each affected proxy's chain.
+func (m *Manager) ReplaceFilterAssignments(filterName string, proxyNames []string) (FilterView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.catalog.byName[filterName]; !exists {
+		return FilterView{}, ErrNotFound
+	}
+	next := m.store.Snapshot()
+	current := make(map[string]struct{})
+	for _, name := range assignedProxies(next, filterName) {
+		current[name] = struct{}{}
+	}
+	desired := make(map[string]struct{}, len(proxyNames))
+	for _, name := range proxyNames {
+		if _, duplicate := desired[name]; duplicate {
+			return FilterView{}, fmt.Errorf("duplicate proxy name %q", name)
+		}
+		definition, exists := findProxy(next, name)
+		if !exists {
+			return FilterView{}, fmt.Errorf("%w: proxy %q", ErrNotFound, name)
+		}
+		if _, alreadyAssigned := current[name]; !alreadyAssigned && !filterSupportsProtocol(m.catalog.byName[filterName], definition.Protocol) {
+			return FilterView{}, fmt.Errorf("filter %q is incompatible with %s proxy %q", filterName, strings.ToUpper(definition.Protocol), name)
+		}
+		desired[name] = struct{}{}
+	}
+
+	changed := false
+	for index, definition := range next.Proxies {
+		_, wanted := desired[definition.Name]
+		filters, updated := replaceFilterAssignment(definition.Filters, filterName, wanted)
+		if !updated {
+			continue
+		}
+		next.Proxies[index].Filters = filters
+		changed = true
+	}
+	if !changed {
+		return m.filterViewLocked(filterName), nil
+	}
+	if err := m.applyLocked(next); err != nil {
+		m.reportControlFailure(err)
+		return FilterView{}, err
+	}
+	return m.filterViewLocked(filterName), nil
 }
 
 // ReplaceManagedFilter validates and atomically replaces an editable YAML filter.
@@ -787,7 +834,51 @@ func singleYAMLFilter(source string) (filter.Filter, error) {
 // managedViewLocked builds the API representation for a managed filter.
 func (m *Manager) managedViewLocked(name string) ManagedFilterView {
 	managed := m.catalog.managed[name]
-	return ManagedFilterView{FilterView: m.catalog.byName[name], YAML: managed.YAML, AssignedProxies: assignedProxies(m.store.Snapshot(), name)}
+	return ManagedFilterView{FilterView: m.filterViewLocked(name), YAML: managed.YAML}
+}
+
+// filterViewLocked adds live assignment metadata to one catalog description.
+func (m *Manager) filterViewLocked(name string) FilterView {
+	view := m.catalog.byName[name]
+	view.AssignedProxies = assignedProxies(m.store.Snapshot(), name)
+	return view
+}
+
+func filterSupportsProtocol(view FilterView, protocol string) bool {
+	if len(view.Protocols) == 0 {
+		return true
+	}
+	for _, supported := range view.Protocols {
+		if supported == protocol {
+			return true
+		}
+	}
+	return false
+}
+
+// replaceFilterAssignment returns a filter chain with at most one occurrence
+// of name. Retained filters preserve their order; a new assignment is appended.
+func replaceFilterAssignment(filters []string, name string, assigned bool) ([]string, bool) {
+	updated := make([]string, 0, len(filters)+1)
+	found := false
+	changed := false
+	for _, current := range filters {
+		if current != name {
+			updated = append(updated, current)
+			continue
+		}
+		if assigned && !found {
+			updated = append(updated, current)
+			found = true
+			continue
+		}
+		changed = true
+	}
+	if assigned && !found {
+		updated = append(updated, name)
+		changed = true
+	}
+	return updated, changed
 }
 
 // catalogFor builds the filter registry and metadata for a complete config.

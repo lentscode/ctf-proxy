@@ -24,7 +24,7 @@ test("operator can scan, configure, and restore a Compose deployment", async ({
     };
   });
   await expect(protocol).toHaveCSS("opacity", "1");
-  await selection.check();
+  await selection.click();
   await expect(protocol).toBeEnabled();
   const enabledStyle = await protocol.evaluate((element) => {
     const style = window.getComputedStyle(element);

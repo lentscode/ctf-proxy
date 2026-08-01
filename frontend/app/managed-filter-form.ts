@@ -131,8 +131,9 @@ export function labelForField(field: MatchField): string {
   return fieldLabels[field];
 }
 
-// createEmptyDraft creates a valid initial draft scoped to a target proxy protocol.
-export function createEmptyDraft(protocol: FilterProtocol): ManagedFilterDraft {
+// createEmptyDraft creates a valid protocol-agnostic initial managed-filter draft.
+export function createEmptyDraft(): ManagedFilterDraft {
+  const protocol: FilterProtocol = "http";
   return {
     name: "",
     active: false,

@@ -41,11 +41,11 @@ const filterViewSchema = z.object({
   protocols: z.array(z.string()),
   directions: z.array(z.string()),
   needs_http_body: z.boolean(),
+  assigned_proxies: z.array(z.string()),
 });
 
 const managedFilterViewSchema = filterViewSchema.extend({
   yaml: z.string(),
-  assigned_proxies: z.array(z.string()),
 });
 
 const eventSchema = z.object({
@@ -224,7 +224,7 @@ export async function getEvents(): Promise<ObserveEvent[]> {
   return (await request("/api/v1/events?limit=100", eventsSchema)).events;
 }
 
-// getFilters fetches metadata for filters available to proxy definitions.
+// getFilters fetches the complete filter library and current proxy assignments.
 export async function getFilters(): Promise<FilterView[]> {
   return (await request("/api/v1/filters", filtersSchema)).filters;
 }
@@ -295,18 +295,29 @@ export async function getManagedFilter(
   );
 }
 
-// createManagedFilter creates and attaches one API-managed YAML filter to a proxy.
+// createManagedFilter creates one unassigned API-managed YAML filter.
 export async function createManagedFilter(
-  proxyName: string,
   yaml: string,
 ): Promise<ManagedFilterView> {
+  return request("/api/v1/filters", managedFilterViewSchema, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml }),
+  });
+}
+
+// replaceFilterAssignments atomically replaces the proxies using one filter.
+export async function replaceFilterAssignments(
+  name: string,
+  proxies: string[],
+): Promise<FilterView> {
   return request(
-    `/api/v1/proxies/${encodeURIComponent(proxyName)}/filters`,
-    managedFilterViewSchema,
+    `/api/v1/filters/${encodeURIComponent(name)}/assignments`,
+    filterViewSchema,
     {
-      method: "POST",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ yaml }),
+      body: JSON.stringify({ proxies }),
     },
   );
 }
